@@ -17,13 +17,18 @@ export const analyzeVoiceAudio = async (
   fileBuffer?: Buffer,
   filename: string = "audio.wav",
   mimeType: string = "audio/wav",
-  scenario?: string
+  scenario?: string,
+  transcription?: string
 ): Promise<VoiceAnalysisResult> => {
   try {
     const formData = new FormData();
 
     if (scenario) {
       formData.append("scenario", scenario);
+    }
+
+    if (transcription) {
+      formData.append("transcription", transcription);
     }
 
     if (fileBuffer) {

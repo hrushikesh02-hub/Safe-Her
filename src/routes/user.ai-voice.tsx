@@ -103,11 +103,13 @@ function AIVoiceMonitorPage() {
   /* ---- Confirmation rolling window ---- */
   const criticalEventsRef = useRef<CriticalEvent[]>([]);
 
-  /* ---- Media recorder refs ---- */
+  /* ---- Media recorder & Speech recognition refs ---- */
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const intervalTimerRef = useRef<any>(null);
+  const speechRecognitionRef = useRef<any>(null);
+  const currentTranscriptRef = useRef<string>("");
 
   /* ---- Cancel countdown ref ---- */
   const cancelTimerRef = useRef<any>(null);
@@ -181,7 +183,6 @@ function AIVoiceMonitorPage() {
 
     try {
       const lastResult = customResult || criticalEventsRef.current.at(-1)?.result || analysis;
-      // Use current GPS or fallback to default coordinates if lock pending
       const lat = gpsLocation?.lat || 19.9019;
       const lng = gpsLocation?.lng || 74.4944;
 
@@ -223,7 +224,6 @@ function AIVoiceMonitorPage() {
   ============================================================== */
   const evaluateCriticalDetection = useCallback(
     (result: VoiceAnalysisResult) => {
-      // Trigger immediately for screams, shouting, keywords, or risk >= 60
       const isCritical =
         result.distress_detected &&
         (result.risk_level === "CRITICAL" ||
@@ -232,6 +232,7 @@ function AIVoiceMonitorPage() {
           result.distress_type === "scream" ||
           result.distress_type === "shouting" ||
           result.distress_type === "distress" ||
+          result.distress_type === "help_keyword" ||
           (result.detected_keywords && result.detected_keywords.length > 0));
 
       if (!isCritical) return;
@@ -242,8 +243,12 @@ function AIVoiceMonitorPage() {
     [fireSOS]
   );
 
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const pcmDataRef = useRef<Float32Array[]>([]);
+
   /* ==============================================================
-     Audio monitoring — chunk pipeline
+     Audio monitoring — chunk pipeline + Speech Recognition + Acoustic Analyser
   ============================================================== */
   const startVoiceMonitoring = async () => {
     try {
@@ -263,6 +268,100 @@ function AIVoiceMonitorPage() {
       streamRef.current = stream;
       setIsMonitoring(true);
       toast.success("🎙️ AI Voice Safety Monitoring activated.");
+
+      // Setup Web Audio Analyser for Instant Scream / Loud Sound Detection
+      try {
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        audioContextRef.current = audioCtx;
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
+        analyserRef.current = analyser;
+
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const checkAcoustics = () => {
+          if (!streamRef.current || !streamRef.current.active) return;
+          analyser.getByteFrequencyData(dataArray);
+
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i];
+          }
+          const avgVolume = sum / dataArray.length;
+
+          // If sudden loud acoustic scream/noise spike (> 120 / 255)
+          if (avgVolume > 115) {
+            console.log("🚨 Loud Acoustic Sound / Scream Detected (Level:", avgVolume, ")");
+            cycleRecordingChunk();
+          }
+
+          if (isMonitoring) {
+            requestAnimationFrame(checkAcoustics);
+          }
+        };
+        requestAnimationFrame(checkAcoustics);
+      } catch (audioErr) {
+        console.warn("AudioContext analyser notice:", audioErr);
+      }
+
+      // Start Web Speech Recognition if available in browser
+      const SpeechRecognition =
+        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        try {
+          const recognition = new SpeechRecognition();
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          recognition.lang = "en-US";
+          recognition.onresult = (event: any) => {
+            let transcript = "";
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+              transcript += event.results[i][0].transcript;
+            }
+            if (transcript.trim()) {
+              currentTranscriptRef.current = transcript.trim();
+              const lower = transcript.toLowerCase();
+              const emergencyWords = [
+                "help",
+                "help me",
+                "save me",
+                "please help",
+                "please help me",
+                "bachao",
+                "mujhe bachao",
+                "emergency",
+                "danger",
+                "in danger",
+                "call police",
+                "sos",
+                "stop",
+                "leave me",
+                "don't touch me",
+              ];
+              const matched = emergencyWords.some((w) => lower.includes(w));
+              if (matched) {
+                console.log("🚨 Spoken Distress Keyword Heard in Browser:", transcript);
+                sendAudioForAnalysis(undefined, transcript.trim());
+              }
+            }
+          };
+          recognition.onerror = (e: any) => {
+            console.warn("SpeechRecognition notice:", e?.error);
+          };
+          recognition.onend = () => {
+            if (streamRef.current && streamRef.current.active) {
+              try {
+                recognition.start();
+              } catch (_) {}
+            }
+          };
+          recognition.start();
+          speechRecognitionRef.current = recognition;
+        } catch (speechErr) {
+          console.warn("SpeechRecognition startup notice:", speechErr);
+        }
+      }
 
       startRecordingChunk();
 
@@ -315,6 +414,18 @@ function AIVoiceMonitorPage() {
       clearInterval(intervalTimerRef.current);
       intervalTimerRef.current = null;
     }
+    if (audioContextRef.current) {
+      try {
+        audioContextRef.current.close();
+      } catch (_) {}
+      audioContextRef.current = null;
+    }
+    if (speechRecognitionRef.current) {
+      try {
+        speechRecognitionRef.current.stop();
+      } catch (_) {}
+      speechRecognitionRef.current = null;
+    }
     if (
       mediaRecorderRef.current &&
       mediaRecorderRef.current.state !== "inactive"
@@ -333,10 +444,14 @@ function AIVoiceMonitorPage() {
     toast.info("Voice monitoring stopped.");
   };
 
-  const sendAudioForAnalysis = async (blob: Blob) => {
+  const sendAudioForAnalysis = async (blob?: Blob, transcriptionOverride?: string) => {
     setAnalyzing(true);
     try {
-      const res = await analyzeVoiceAudio(blob);
+      const text = transcriptionOverride || currentTranscriptRef.current || "";
+      const res = await analyzeVoiceAudio(blob, undefined, "recording.wav", text);
+      if (text && res.distress_detected) {
+        currentTranscriptRef.current = "";
+      }
       setAnalysis(res);
       addHistoryRecord(res);
       evaluateCriticalDetection(res);

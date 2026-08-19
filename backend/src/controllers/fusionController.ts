@@ -3,7 +3,7 @@ import Alert from "../models/Alert";
 import mongoose from "mongoose";
 import { AuthRequest } from "../middleware/authMiddleware";
 import { analyzeFusion } from "../services/fusionAIService";
-import { notifyContactsAndVolunteers } from "./alertController";
+import { EmergencyDispatchService } from "../services/emergencyDispatchService";
 
 const FUSION_AUTO_SOS_THRESHOLD = parseInt(
   process.env.FUSION_AUTO_SOS_THRESHOLD || "78"
@@ -134,18 +134,20 @@ export const triggerFusionSOS = async (
       .filter(Boolean)
       .join(", ") || "multi-modal";
 
-    // Fire-and-forget notifications
-    notifyContactsAndVolunteers(
+    // Fire-and-forget Phase 4 Dispatch Engine
+    EmergencyDispatchService.initiateEmergencyDispatch({
+      alertId: (alert._id as mongoose.Types.ObjectId).toString(),
       userId,
-      (alert._id as mongoose.Types.ObjectId).toString(),
-      lat,
-      lng,
-      "AI_FUSION",
-      finalRiskLevel || "CRITICAL",
-      finalRiskScore || 0,
-      descType,
-      Array.isArray(detectedKeywords) ? detectedKeywords : []
-    ).catch((err) => console.error("Fusion SOS notification error:", err));
+      latitude: lat,
+      longitude: lng,
+      source: "AI_FUSION",
+      riskLevel: finalRiskLevel || "CRITICAL",
+      riskScore: finalRiskScore || 88,
+      distressType: distressType || undefined,
+      movementAnomaly: movementAnomalyType || undefined,
+      detectedKeywords: Array.isArray(detectedKeywords) ? detectedKeywords : [],
+      fusionSource: fusionSource || "VOICE+MOVEMENT+GPS",
+    }).catch((err) => console.error("Fusion SOS dispatch error:", err));
 
     res.status(201).json({
       success: true,

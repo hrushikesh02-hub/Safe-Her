@@ -32,7 +32,13 @@ async def analyze_voice_distress(
             return VoiceAnalysisResponse(**result)
 
         if not file:
-            # Fallback to normal if no file provided
+            if transcription and transcription.strip():
+                result = detector.detect(
+                    audio_features={},
+                    transcription_text=transcription.strip()
+                )
+                return VoiceAnalysisResponse(**result)
+            # Fallback to normal if neither file nor transcription provided
             result = detector.detect(audio_features={}, scenario_override="normal")
             return VoiceAnalysisResponse(**result)
 

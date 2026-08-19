@@ -83,6 +83,34 @@ export interface IAlert extends Document {
     resolvedAt: Date;
   };
 
+  // Emergency Evidence & Reporting
+  evidenceStatus?: "NONE" | "RECORDING" | "CAPTURED" | "FAILED";
+  audioRecording?: {
+    url: string;
+    durationSec?: number;
+    recordedAt?: Date;
+    storageRef?: string;
+    mimeType?: string;
+    fileSize?: number;
+  };
+  videoRecording?: {
+    url: string;
+    durationSec?: number;
+    recordedAt?: Date;
+    storageRef?: string;
+    mimeType?: string;
+    fileSize?: number;
+  };
+  evidenceAccessLogs?: {
+    adminId: mongoose.Types.ObjectId;
+    adminName?: string;
+    mediaType: "AUDIO" | "VIDEO" | "ALL";
+    action: "VIEW" | "DOWNLOAD" | "STREAM";
+    accessedAt: Date;
+    ipAddress?: string;
+  }[];
+  reportGeneratedAt?: Date;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -257,6 +285,44 @@ const alertSchema = new Schema(
       responderName: String,
       resolvedAt: Date,
     },
+
+    // Emergency Evidence & Reporting
+    evidenceStatus: {
+      type: String,
+      enum: ["NONE", "RECORDING", "CAPTURED", "FAILED"],
+      default: "NONE",
+    },
+
+    audioRecording: {
+      url: String,
+      durationSec: Number,
+      recordedAt: Date,
+      storageRef: String,
+      mimeType: String,
+      fileSize: Number,
+    },
+
+    videoRecording: {
+      url: String,
+      durationSec: Number,
+      recordedAt: Date,
+      storageRef: String,
+      mimeType: String,
+      fileSize: Number,
+    },
+
+    evidenceAccessLogs: [
+      {
+        adminId: { type: Schema.Types.ObjectId, ref: "User" },
+        adminName: String,
+        mediaType: { type: String, enum: ["AUDIO", "VIDEO", "ALL"] },
+        action: { type: String, enum: ["VIEW", "DOWNLOAD", "STREAM"], default: "VIEW" },
+        accessedAt: { type: Date, default: Date.now },
+        ipAddress: String,
+      },
+    ],
+
+    reportGeneratedAt: Date,
   },
   {
     timestamps: true,

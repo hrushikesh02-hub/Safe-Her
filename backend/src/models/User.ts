@@ -27,6 +27,13 @@ export interface IUser extends Document {
     averageResponseTimeSec: number;
   };
 
+  // Volunteer Verification Workflow
+  verificationStatus?: "PENDING" | "APPROVED" | "REJECTED";
+  verifiedAt?: Date;
+  verifiedBy?: mongoose.Types.ObjectId;
+  rejectionReason?: string;
+  verificationNotificationStatus?: "NOT_SENT" | "SENT" | "FAILED";
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -107,6 +114,21 @@ const userSchema = new Schema<IUser>(
       timedOutCount: { type: Number, default: 0 },
       resolvedCount: { type: Number, default: 0 },
       averageResponseTimeSec: { type: Number, default: 0 },
+    },
+
+    // Verification Workflow
+    verificationStatus: {
+      type: String,
+      enum: ["PENDING", "APPROVED", "REJECTED"],
+      default: "PENDING",
+    },
+    verifiedAt: Date,
+    verifiedBy: { type: Schema.Types.ObjectId, ref: "User" },
+    rejectionReason: String,
+    verificationNotificationStatus: {
+      type: String,
+      enum: ["NOT_SENT", "SENT", "FAILED"],
+      default: "NOT_SENT",
     },
   },
   {

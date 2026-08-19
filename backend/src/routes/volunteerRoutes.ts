@@ -4,12 +4,19 @@ import {
   getAlerts,
   getAlertById,
   acceptAlert,
+  rejectAlert,
   resolveAlert,
   getProfile,
   updateProfile,
   getVolunteerIncidents,
   updateVolunteerLocation,
 } from "../controllers/volunteerController";
+import {
+  startResponse,
+  markNearby,
+  markArrived,
+  updateResponderLocation,
+} from "../controllers/alertController";
 
 import {
   verifyToken,
@@ -29,33 +36,30 @@ router.use(verifyToken);
 router.use(authorizeRoles("volunteer"));
 
 /* ================= Dashboard ================= */
-
 router.get("/dashboard", getDashboard);
 
 /* ================= Alerts ================= */
-
 router.get("/alerts", getAlerts);
+router.get("/alerts/:id", getAlertById);
+router.put("/alerts/:id/accept", acceptAlert);
+router.post("/alerts/:id/accept", acceptAlert);
+router.post("/alerts/:id/reject", rejectAlert);
+router.put("/alerts/:id/resolve", resolveAlert);
+router.post("/alerts/:id/resolve", resolveAlert);
+router.post("/alerts/:id/start-response", startResponse);
+router.post("/alerts/:id/nearby", markNearby);
+router.post("/alerts/:id/arrived", markArrived);
+router.post("/alerts/:id/responder-location", updateResponderLocation);
 
 /* ================= Incident History ================= */
-
 router.get("/incidents", getVolunteerIncidents);
 
-/* ================= Single Alert ================= */
-
-router.get("/alerts/:id", getAlertById);
-
-router.put("/alerts/:id/accept", acceptAlert);
-
-router.put("/alerts/:id/resolve", resolveAlert);
-
 /* ================= Location ================= */
-
 router.put("/location", updateVolunteerLocation);
+router.post("/location", updateVolunteerLocation);
 
 /* ================= Profile ================= */
-
 router.get("/profile", getProfile);
-
 router.put(
   "/profile",
   upload.single("profileImage"),

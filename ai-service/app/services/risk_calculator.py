@@ -30,7 +30,7 @@ class VoiceRiskCalculator:
             score += self.scream_weight
         elif dt_lower in ["shouting", "shout"]:
             score += self.shouting_weight
-        elif dt_lower == "distress":
+        elif dt_lower in ["distress", "help_keyword", "keyword", "panic"]:
             score += 40
 
         # Keywords presence add weight

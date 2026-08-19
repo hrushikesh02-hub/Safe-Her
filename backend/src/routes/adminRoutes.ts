@@ -1,131 +1,70 @@
 import express from "express";
-import {getVolunteers,verifyVolunteer,rejectVolunteer,
-  getDashboardStats,acceptAlert,resolveAlert,
-  getAllUsers,deleteUser,toggleUserStatus,getActiveAlerts, getSafeZones,
+import {
+  getVolunteers,
+  verifyVolunteer,
+  rejectVolunteer,
+  resendVerificationEmail,
+  getDashboardStats,
+  acceptAlert,
+  resolveAlert,
+  getAllUsers,
+  deleteUser,
+  toggleUserStatus,
+  getActiveAlerts,
+  getAllIncidents,
+  getIncidentReportData,
+  getSafeZones,
   addSafeZone,
-  deleteSafeZone,getReports
+  deleteSafeZone,
+  getReports,
+  getRecentAlerts,
+  getRecentActivities,
+  getResponseAnalytics,
 } from "../controllers/adminController";
 import {
   verifyToken,
   authorizeRoles,
 } from "../middleware/authMiddleware";
-import {
-  getRecentAlerts,
-  getRecentActivities,
-} from "../controllers/adminController";
 
 const router = express.Router();
 
-router.get(
-  "/dashboard",
-  verifyToken,
-  authorizeRoles("admin"),
-  getDashboardStats
-);
+router.use(verifyToken);
+router.use(authorizeRoles("admin"));
 
-router.get(
-  "/users",
-  verifyToken,
-  authorizeRoles("admin"),
-  getAllUsers
-);
+// Command Center & Analytics
+router.get("/dashboard", getDashboardStats);
+router.get("/response-analytics", getResponseAnalytics);
 
-router.delete(
-  "/users/:id",
-  verifyToken,
-  authorizeRoles("admin"),
-  deleteUser
-);
+// User Management
+router.get("/users", getAllUsers);
+router.delete("/users/:id", deleteUser);
+router.put("/users/:id/status", toggleUserStatus);
 
-router.put(
-  "/users/:id/status",
-  verifyToken,
-  authorizeRoles("admin"),
-  toggleUserStatus
-);
+// Alerts & Incidents
+router.get("/alerts", getActiveAlerts);
+router.get("/incidents", getAllIncidents);
+router.get("/incidents/:id/report-data", getIncidentReportData);
+router.put("/alerts/:id/accept", acceptAlert);
+router.post("/alerts/:id/accept", acceptAlert);
+router.put("/alerts/:id/resolve", resolveAlert);
+router.post("/alerts/:id/resolve", resolveAlert);
 
-router.get(
-  "/alerts",
-  verifyToken,
-  authorizeRoles("admin"),
-  getActiveAlerts
-);
+// Volunteer Verification Center
+router.get("/volunteers", getVolunteers);
+router.put("/volunteers/:id/verify", verifyVolunteer);
+router.post("/volunteers/:id/verify", verifyVolunteer);
+router.post("/volunteers/:id/reject", rejectVolunteer);
+router.delete("/volunteers/:id", rejectVolunteer);
+router.post("/volunteers/:id/resend-email", resendVerificationEmail);
 
-router.put(
-  "/alerts/:id/accept",
-  verifyToken,
-  authorizeRoles("admin"),
-  acceptAlert
-);
+// Safe Zones
+router.get("/safe-zones", getSafeZones);
+router.post("/safe-zones", addSafeZone);
+router.delete("/safe-zones/:id", deleteSafeZone);
 
-router.put(
-  "/alerts/:id/resolve",
-  verifyToken,
-  authorizeRoles("admin"),
-  resolveAlert
-);
-
-router.get(
-  "/volunteers",
-  verifyToken,
-  authorizeRoles("admin"),
-  getVolunteers
-);
-
-router.put(
-  "/volunteers/:id/verify",
-  verifyToken,
-  authorizeRoles("admin"),
-  verifyVolunteer
-);
-
-router.delete(
-  "/volunteers/:id",
-  verifyToken,
-  authorizeRoles("admin"),
-  rejectVolunteer
-);
-
-router.get(
-  "/safe-zones",
-  verifyToken,
-  authorizeRoles("admin"),
-  getSafeZones
-);
-
-router.post(
-  "/safe-zones",
-  verifyToken,
-  authorizeRoles("admin"),
-  addSafeZone
-);
-
-router.delete(
-  "/safe-zones/:id",
-  verifyToken,
-  authorizeRoles("admin"),
-  deleteSafeZone
-);
-
-router.get(
-  "/reports",
-  verifyToken,
-  authorizeRoles("admin"),
-  getReports
-);
-
-router.get(
-  "/recent-alerts",
-  verifyToken,
-  authorizeRoles("admin"),
-  getRecentAlerts
-);
-
-router.get(
-  "/recent-activities",
-  verifyToken,
-  authorizeRoles("admin"),
-  getRecentActivities
-);
+// Intelligence & Activity Feed
+router.get("/reports", getReports);
+router.get("/recent-alerts", getRecentAlerts);
+router.get("/recent-activities", getRecentActivities);
 
 export default router;

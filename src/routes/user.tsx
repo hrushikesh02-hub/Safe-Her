@@ -5,17 +5,11 @@ import { useEffect, useState } from "react";
 import { getUserProfile } from "@/services/userService";
 
 const items: NavItem[] = [
-  { label: "Dashboard", to: "/user/dashboard", icon: <LayoutDashboard className="size-4" /> },
-  { label: "Predictive Safety AI", to: "/user/predictive-safety", icon: <Sparkles className="size-4 text-purple-500" /> },
-  { label: "Unified Safety AI", to: "/user/ai-fusion", icon: <Layers className="size-4" /> },
-  { label: "AI Voice Monitor", to: "/user/ai-voice", icon: <Mic className="size-4" /> },
-  { label: "AI Movement Monitor", to: "/user/ai-movement", icon: <Activity className="size-4" /> },
-  { label: "Safety Profile", to: "/user/profile", icon: <UserCircle className="size-4" /> },
-  { label: "Emergency Contacts", to: "/user/contacts", icon: <Phone className="size-4" /> },
-  { label: "Emergency SOS", to: "/user/sos", icon: <Siren className="size-4" /> },
-  { label: "Live Location", to: "/user/location", icon: <MapPin className="size-4" /> },
-  { label: "Support Teams", to: "/user/support-teams", icon: <Users className="size-4" /> },
-  { label: "Safe Zones", to: "/user/safe-zones", icon: <Building2 className="size-4" /> },
+  { label: "Home / Safety Status", to: "/user/dashboard", icon: <LayoutDashboard className="size-4" /> },
+  { label: "Emergency SOS", to: "/user/sos", icon: <Siren className="size-4 text-red-500" /> },
+  { label: "Emergency Contacts", to: "/user/contacts", icon: <Phone className="size-4 text-blue-500" /> },
+  { label: "Safety Shield (AI)", to: "/user/ai-fusion", icon: <Sparkles className="size-4 text-purple-500" /> },
+  { label: "My Profile", to: "/user/profile", icon: <UserCircle className="size-4" /> },
   { label: "Alert History", to: "/user/history", icon: <History className="size-4" /> },
 ];
 

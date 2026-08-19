@@ -69,4 +69,22 @@ app.use((req, res) => {
   });
 });
 
+/* ===========================
+   Global Error Handler
+=========================== */
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err?.name === "MulterError") {
+    res.status(400).json({
+      success: false,
+      message: `Upload error: ${err.message}`,
+      code: err.code,
+    });
+    return;
+  }
+  res.status(err?.status || 500).json({
+    success: false,
+    message: err?.message || "Internal Server Error",
+  });
+});
+
 export default app;

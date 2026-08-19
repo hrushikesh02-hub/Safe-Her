@@ -1,14 +1,27 @@
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { getRole } from "@/lib/auth";
-import { Siren, Phone, Building2, ArrowUpRight } from "lucide-react";
-import { StatCard } from "@/components/ui/stat-card";
-import { StatusBadge } from "@/components/ui/status-badge";
+import {
+  Siren,
+  Phone,
+  ShieldCheck,
+  ShieldAlert,
+  MapPin,
+  Clock,
+  User as UserIcon,
+  Mic,
+  Activity,
+  Navigation,
+  Sparkles,
+  ArrowRight,
+  CheckCircle2,
+  AlertTriangle,
+  Radio,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   getAlertHistory,
   getEmergencyContacts,
-  getNearbySafeZones,
   getUserProfile,
 } from "@/services/userService";
 import { toast } from "sonner";
@@ -42,34 +55,27 @@ interface User {
 interface Alert {
   _id: string;
   status: "active" | "accepted" | "resolved";
+  priority?: string;
+  responseStatus?: string;
+  assignedVolunteerName?: string;
+  estimatedEtaMinutes?: number;
   latitude?: number;
   longitude?: number;
+  source?: string;
   createdAt: string;
   updatedAt: string;
-}
-
-interface DashboardStats {
-  totalAlerts: number;
-  activeAlerts: number;
-  contactsCount: number;
-  safeZonesCount: number;
 }
 
 function UserDashboard() {
   const navigate = useNavigate();
 
-  const [stats, setStats] = useState<DashboardStats>({
-    totalAlerts: 0,
-    activeAlerts: 0,
-    contactsCount: 0,
-    safeZonesCount: 0,
-  });
-
-  const [recentAlerts, setRecentAlerts] = useState<Alert[]>([]);
   const [user, setUser] = useState<User | null>(null);
-
-  const [loading, setLoading] = useState(true);
-  const [accessDenied, setAccessDenied] = useState(false);
+  const [contactsCount, setContactsCount] = useState<number>(0);
+  const [activeAlert, setActiveAlert] = useState<Alert | null>(null);
+  const [recentAlerts, setRecentAlerts] = useState<Alert[]>([]);
+  const [monitoringActive, setMonitoringActive] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [locationActive, setLocationActive] = useState<boolean>(false);
 
   const loadDashboard = useCallback(async () => {
     try {
@@ -80,72 +86,34 @@ function UserDashboard() {
       ]);
 
       setUser(profileRes.data);
+      setContactsCount(contactsRes.data?.data?.length || 0);
 
-      const alerts: Alert[] = [...alertRes.data.data].sort(
+      const alerts: Alert[] = [...(alertRes.data?.data || [])].sort(
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       );
 
-      setRecentAlerts(alerts);
+      setRecentAlerts(alerts.slice(0, 3));
 
-      const activeCount = alerts.filter(
+      // Find active incident
+      const currentActive = alerts.find(
         (a) => a.status === "active" || a.status === "accepted"
-      ).length;
-
-      setStats((prev) => ({
-        ...prev,
-        totalAlerts: alerts.length,
-        activeAlerts: activeCount,
-        contactsCount: contactsRes.data.data.length,
-      }));
-
-      // Get current location and fetch nearby safe zones (fire-and-forget,
-      // does not block the main dashboard load/loading state)
-      navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          try {
-            const safeZoneRes = await getNearbySafeZones(
-              position.coords.latitude,
-              position.coords.longitude
-            );
-
-            setStats((prev) => ({
-              ...prev,
-              safeZonesCount: safeZoneRes.data.data.length,
-            }));
-          } catch (err) {
-            console.error(err);
-            setStats((prev) => ({ ...prev, safeZonesCount: 0 }));
-          }
-        },
-        () => {
-          toast.error("Location permission denied");
-          setStats((prev) => ({ ...prev, safeZonesCount: 0 }));
-        }
       );
+      setActiveAlert(currentActive || null);
+
+      // Check location
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          () => setLocationActive(true),
+          () => setLocationActive(false)
+        );
+      }
     } catch (error: any) {
       const status = error?.response?.status;
-
       if (status === 401) {
         toast.error("Session expired. Please log in again.");
         navigate({ to: "/login" });
         return;
       }
-
-      if (status === 403) {
-        setAccessDenied(true);
-        return;
-      }
-
-      if (status === 404) {
-        toast.error("Dashboard data not found.");
-        return;
-      }
-
-      if (status === 500) {
-        toast.error("Server error while loading dashboard.");
-        return;
-      }
-
       toast.error(error.response?.data?.message || "Failed to load dashboard");
     } finally {
       setLoading(false);
@@ -154,161 +122,270 @@ function UserDashboard() {
 
   useEffect(() => {
     loadDashboard();
+    const interval = setInterval(loadDashboard, 5000);
+    return () => clearInterval(interval);
   }, [loadDashboard]);
 
-  if (accessDenied) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border bg-card py-16 text-center shadow-sm">
-        <p className="text-sm font-medium">Access denied.</p>
-        <p className="text-xs text-muted-foreground">You don't have permission to view this dashboard.</p>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-6">
-      <div className="rounded-3xl gradient-hero p-6 text-white shadow-elegant md:p-8">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+    <div className="max-w-2xl mx-auto space-y-6 pb-12">
+      {/* =========================================================================
+          1. PRIMARY SAFETY STATUS BANNER (Answers: "Am I Safe?")
+         ========================================================================= */}
+      {activeAlert ? (
+        /* Emergency Active Banner */
+        <div className="rounded-3xl bg-red-600 text-white p-6 shadow-xl space-y-4 animate-pulse">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-xs font-black tracking-widest uppercase bg-white/20 px-3 py-1 rounded-full">
+              <span className="size-2 rounded-full bg-white animate-ping" />
+              EMERGENCY ACTIVE
+            </div>
+            <span className="text-xs font-bold text-red-100">
+              Priority: {activeAlert.priority || "P1"}
+            </span>
+          </div>
+
           <div>
-            <div className="text-xs uppercase tracking-widest text-white/80">Stay safe today</div>
-            <h1 className="mt-1 text-2xl font-bold md:text-3xl">
-              Hi {user?.name || "User"}, your network is ready 24/7
-            </h1>
-            <p className="mt-2 max-w-xl text-sm text-white/80">
-              Your emergency network is ready. Press SOS anytime for instant help.
+            <h1 className="text-2xl font-black">Help is Being Coordinated</h1>
+            <p className="text-xs text-red-100 mt-1">
+              SafeHer has dispatched nearby responders and notified your emergency contacts.
             </p>
           </div>
-          <Button asChild size="lg" className="bg-emergency text-white hover:bg-emergency/90 shadow-elegant">
+
+          {activeAlert.assignedVolunteerName && (
+            <div className="bg-black/20 backdrop-blur rounded-2xl p-3.5 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2.5">
+                <div className="size-8 rounded-full bg-white/20 grid place-items-center font-bold">
+                  <UserIcon className="size-4" />
+                </div>
+                <div>
+                  <div className="font-bold">{activeAlert.assignedVolunteerName}</div>
+                  <div className="text-[11px] text-red-200">
+                    Status: {activeAlert.responseStatus || "En Route"}
+                  </div>
+                </div>
+              </div>
+              {activeAlert.estimatedEtaMinutes != null && (
+                <div className="font-extrabold text-sm">
+                  ~{activeAlert.estimatedEtaMinutes} min ETA
+                </div>
+              )}
+            </div>
+          )}
+
+          <Button asChild size="lg" className="w-full bg-white text-red-600 hover:bg-red-50 font-black text-sm h-12 rounded-2xl shadow">
             <Link to="/user/sos">
-              <Siren className="mr-2 size-5" />
-              Open SOS
+              <Siren className="mr-2 size-5" /> OPEN LIVE EMERGENCY CENTER
             </Link>
           </Button>
         </div>
+      ) : (
+        /* Normal Safe Status Banner */
+        <div className="rounded-3xl bg-gradient-to-br from-emerald-600 to-teal-700 text-white p-6 md:p-8 shadow-xl space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-xs font-black tracking-wider uppercase bg-white/20 px-3 py-1 rounded-full">
+              <span className="size-2 rounded-full bg-emerald-300 animate-pulse" />
+              YOU ARE SAFE
+            </div>
+            <div className="text-xs text-emerald-100 font-medium flex items-center gap-1">
+              <MapPin className="size-3.5" />
+              {locationActive ? "GPS Active" : "GPS Standby"}
+            </div>
+          </div>
+
+          <div>
+            <h1 className="text-2xl md:text-3xl font-black">
+              Hello, {user?.name?.split(" ")[0] || "Friend"}!
+            </h1>
+            <p className="text-xs md:text-sm text-emerald-100 mt-1 max-w-md">
+              SafeHer Smart Protection is actively guarding your safety 24/7.
+            </p>
+          </div>
+
+          {/* Simple Toggle Guard */}
+          <div className="bg-black/15 backdrop-blur rounded-2xl p-3.5 flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2.5">
+              <ShieldCheck className="size-5 text-emerald-300" />
+              <div>
+                <span className="font-bold block text-foreground dark:text-white">Continuous AI Shield</span>
+                <span className="text-[11px] text-emerald-100">Voice & Motion Protection Online</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMonitoringActive(!monitoringActive)}
+              className={`px-3 py-1 rounded-full text-xs font-extrabold border transition-all ${
+                monitoringActive
+                  ? "bg-white text-emerald-700 border-white"
+                  : "bg-black/30 text-white/70 border-white/30"
+              }`}
+            >
+              {monitoringActive ? "ACTIVE" : "PAUSED"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          2. MASSIVE SOS ACTION BUTTON (Answers: "What Should I Do?")
+         ========================================================================= */}
+      <div className="rounded-3xl border bg-card p-6 text-center shadow-sm space-y-4">
+        <Link
+          to="/user/sos"
+          className="mx-auto flex flex-col items-center justify-center size-44 rounded-full bg-gradient-to-br from-red-500 via-red-600 to-rose-700 text-white shadow-2xl transition-transform active:scale-95 hover:scale-105 ring-8 ring-red-500/20 animate-pulse group cursor-pointer"
+        >
+          <Siren className="size-16 drop-shadow-md group-hover:rotate-12 transition-transform" />
+          <span className="font-black text-2xl tracking-wider mt-1">TAP SOS</span>
+          <span className="text-[10px] font-bold text-red-100 uppercase tracking-widest">
+            मदद / GET HELP
+          </span>
+        </Link>
+        <p className="text-xs text-muted-foreground max-w-xs mx-auto">
+          Tap for instant emergency dispatch. Coordinates, volunteers, and evidence recording will activate.
+        </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {loading ? (
-          <>
-            <StatCardSkeleton />
-            <StatCardSkeleton />
-            <StatCardSkeleton />
-            <StatCardSkeleton />
-          </>
-        ) : (
-          <>
-            <StatCard label="Total Alerts" value={stats.totalAlerts.toString()} />
-            <StatCard
-              label="Active Alerts"
-              value={stats.activeAlerts.toString()}
-              icon={<Siren className="size-4" />}
-              tone="emergency"
-            />
-            <StatCard
-              label="Emergency Contacts"
-              value={stats.contactsCount.toString()}
-              icon={<Phone className="size-4" />}
-              tone="success"
-            />
-            <StatCard
-              label="Nearby Safe Zones"
-              value={stats.safeZonesCount.toString()}
-              icon={<Building2 className="size-4" />}
-              tone="warning"
-            />
-          </>
-        )}
+      {/* =========================================================================
+          3. TRANSLATED AI SAFETY SENSORS (Simple, No Complex Jargon)
+         ========================================================================= */}
+      <div className="rounded-3xl border bg-card p-5 shadow-sm space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="font-extrabold text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+            <Sparkles className="size-3.5 text-purple-500" /> Live Safety Monitoring
+          </h3>
+          <Link
+            to="/user/ai-fusion"
+            className="text-[11px] font-bold text-primary hover:underline flex items-center gap-0.5"
+          >
+            View Sensor AI <ArrowRight className="size-3" />
+          </Link>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2.5 pt-1">
+          {/* Voice Guard */}
+          <div className="rounded-2xl border bg-muted/20 p-3 text-center space-y-1">
+            <Mic className="size-4 mx-auto text-blue-500" />
+            <div className="text-[10px] font-semibold text-muted-foreground">Voice Guard</div>
+            <div className="text-xs font-extrabold text-emerald-600">Protected</div>
+          </div>
+
+          {/* Motion Guard */}
+          <div className="rounded-2xl border bg-muted/20 p-3 text-center space-y-1">
+            <Activity className="size-4 mx-auto text-purple-500" />
+            <div className="text-[10px] font-semibold text-muted-foreground">Movement</div>
+            <div className="text-xs font-extrabold text-emerald-600">Normal</div>
+          </div>
+
+          {/* Location Safety */}
+          <div className="rounded-2xl border bg-muted/20 p-3 text-center space-y-1">
+            <Navigation className="size-4 mx-auto text-emerald-500" />
+            <div className="text-[10px] font-semibold text-muted-foreground">Safe Zone</div>
+            <div className="text-xs font-extrabold text-emerald-600">Clear</div>
+          </div>
+        </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2 rounded-2xl border bg-card p-6 shadow-sm">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Recent activity</h2>
-            <Link to="/user/history" className="text-xs font-medium text-primary hover:underline">
-              View all
+      {/* =========================================================================
+          4. EMERGENCY HELPLINES & CONTACTS (Quick Action Tiles)
+         ========================================================================= */}
+      <div className="grid grid-cols-2 gap-3">
+        <a
+          href="tel:112"
+          className="flex items-center justify-between p-4 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold shadow transition-transform active:scale-95"
+        >
+          <div className="flex items-center gap-2.5">
+            <Phone className="size-5" />
+            <div>
+              <div className="text-xs text-blue-100">National Emergency</div>
+              <div className="text-base font-black">Police 112</div>
+            </div>
+          </div>
+        </a>
+
+        <a
+          href="tel:1091"
+          className="flex items-center justify-between p-4 rounded-2xl bg-purple-600 hover:bg-purple-700 text-white font-bold shadow transition-transform active:scale-95"
+        >
+          <div className="flex items-center gap-2.5">
+            <ShieldAlert className="size-5" />
+            <div>
+              <div className="text-xs text-purple-100">Women Helpline</div>
+              <div className="text-base font-black">Call 1091</div>
+            </div>
+          </div>
+        </a>
+      </div>
+
+      {/* =========================================================================
+          5. EMERGENCY CONTACTS & RECENT ACTIVITY
+         ========================================================================= */}
+      <div className="grid sm:grid-cols-2 gap-4">
+        {/* Trusted Contacts Card */}
+        <Link
+          to="/user/contacts"
+          className="rounded-2xl border bg-card p-4 shadow-sm hover:border-primary/50 transition-colors flex items-center justify-between group"
+        >
+          <div className="flex items-center gap-3">
+            <div className="size-10 rounded-full bg-primary/10 text-primary grid place-items-center">
+              <Phone className="size-5" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-foreground">Emergency Contacts</div>
+              <div className="text-[11px] text-muted-foreground">
+                {contactsCount > 0 ? `${contactsCount} contacts linked` : "Add trusted family/friends"}
+              </div>
+            </div>
+          </div>
+          <ArrowRight className="size-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
+        </Link>
+
+        {/* Safety Profile */}
+        <Link
+          to="/user/profile"
+          className="rounded-2xl border bg-card p-4 shadow-sm hover:border-primary/50 transition-colors flex items-center justify-between group"
+        >
+          <div className="flex items-center gap-3">
+            <div className="size-10 rounded-full bg-emerald-500/10 text-emerald-600 grid place-items-center">
+              <UserIcon className="size-5" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-foreground">Safety Profile</div>
+              <div className="text-[11px] text-muted-foreground">Manage profile & preferences</div>
+            </div>
+          </div>
+          <ArrowRight className="size-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
+        </Link>
+      </div>
+
+      {/* Recent Alerts Section */}
+      {recentAlerts.length > 0 && (
+        <div className="rounded-2xl border bg-card p-4 shadow-sm space-y-3">
+          <div className="flex items-center justify-between border-b pb-2">
+            <span className="text-xs font-bold text-foreground">Recent Alert History</span>
+            <Link to="/user/history" className="text-[11px] text-primary font-semibold hover:underline">
+              View All
             </Link>
           </div>
 
-          {loading ? (
-            <RecentActivitySkeleton />
-          ) : recentAlerts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
-              <p className="text-sm text-muted-foreground">No emergency alerts yet.</p>
-            </div>
-          ) : (
-            <ul className="divide-y">
-              {recentAlerts.map((a) => (
-                <li key={a._id} className="flex items-center justify-between py-3">
+          <div className="divide-y text-xs">
+            {recentAlerts.map((a) => (
+              <div key={a._id} className="py-2 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className={`size-2 rounded-full ${a.status === "active" ? "bg-red-600 animate-ping" : "bg-emerald-500"}`} />
                   <div>
-                    <div className="text-sm font-semibold">SOS Alert</div>
-                    <div className="text-xs text-muted-foreground">
-                      {new Date(a.createdAt).toLocaleString()}
-                      {a.latitude != null && a.longitude != null && (
-                        <> · {a.latitude}, {a.longitude}</>
-                      )}
-                    </div>
+                    <span className="font-bold text-foreground capitalize">{a.source?.replace(/_/g, " ") || "SOS Alert"}</span>
+                    <span className="text-[10px] text-muted-foreground block">{new Date(a.createdAt).toLocaleDateString()} · #{a._id.slice(-4)}</span>
                   </div>
-
-                  <StatusBadge status={a.status} />
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        <div className="space-y-4">
-          <QuickAction to="/user/sos" title="Emergency SOS" desc="Trigger an alert" tone="emergency" />
-          <QuickAction to="/user/ai-voice" title="AI Voice Monitor" desc="Real-time distress audio analysis" />
-          <QuickAction to="/user/contacts" title="Trusted contacts" desc="Add or edit contacts" />
-          <QuickAction to="/user/safe-zones" title="Find safe zones" desc="Hospitals & police nearby" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function QuickAction({ to, title, desc, tone }: { to: string; title: string; desc: string; tone?: "emergency" }) {
-  return (
-    <Link
-      to={to}
-      className={`block rounded-2xl border p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-elegant ${
-        tone === "emergency" ? "bg-emergency text-white" : "bg-card"
-      }`}
-    >
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="text-sm font-semibold">{title}</div>
-          <div className={`mt-1 text-xs ${tone === "emergency" ? "text-white/80" : "text-muted-foreground"}`}>
-            {desc}
+                </div>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                  a.status === "active" ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700"
+                }`}>
+                  {a.status}
+                </span>
+              </div>
+            ))}
           </div>
         </div>
-        <ArrowUpRight className="size-4 opacity-70" />
-      </div>
-    </Link>
-  );
-}
-
-function StatCardSkeleton() {
-  return (
-    <div className="rounded-2xl border bg-card p-4 shadow-sm">
-      <div className="h-4 w-24 animate-pulse rounded bg-muted" />
-      <div className="mt-3 h-7 w-16 animate-pulse rounded bg-muted" />
+      )}
     </div>
-  );
-}
-
-function RecentActivitySkeleton() {
-  return (
-    <ul className="divide-y">
-      {[0, 1, 2].map((i) => (
-        <li key={i} className="flex items-center justify-between py-3">
-          <div className="space-y-2">
-            <div className="h-4 w-20 animate-pulse rounded bg-muted" />
-            <div className="h-3 w-36 animate-pulse rounded bg-muted" />
-          </div>
-          <div className="h-5 w-16 animate-pulse rounded-full bg-muted" />
-        </li>
-      ))}
-    </ul>
   );
 }

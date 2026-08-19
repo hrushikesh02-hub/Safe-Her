@@ -1,401 +1,365 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
-  Users,
-  ShieldCheck,
   Siren,
+  ShieldAlert,
+  Users,
+  UserCheck,
   CheckCircle2,
   Clock,
   Activity,
   Bot,
-  Layers,
-  Sparkles,
-  ShieldAlert,
+  MapPin,
+  Eye,
+  Radio,
+  ArrowRight,
+  RefreshCw,
+  Phone,
+  Navigation,
 } from "lucide-react";
 import { StatCard } from "@/components/ui/stat-card";
 import { PageHeader } from "@/components/PageHeader";
-import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { useEffect, useState, useRef } from "react";
 import {
   getDashboardStats,
-  getRecentAlerts,
+  getActiveAlerts,
   getRecentActivities,
+  getResponseAnalytics,
 } from "@/services/adminService";
-import { getAdminPredictiveInsights } from "@/services/predictiveService";
 import { toast } from "sonner";
-import { useNavigate } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/admin/dashboard")({ component: AdminDash });
 
 function AdminDash() {
+  const navigate = useNavigate();
   const [stats, setStats] = useState({
     totalUsers: 0,
     totalVolunteers: 0,
     activeAlerts: 0,
+    criticalIncidents: 0,
+    respondersActive: 0,
+    pendingVerifications: 0,
     resolvedAlerts: 0,
+    resolvedToday: 0,
   });
-  const navigate = useNavigate();
-  const [recentAlerts, setRecentAlerts] = useState<any[]>([]);
+
+  const [activeIncidents, setActiveIncidents] = useState<any[]>([]);
   const [recentActivities, setRecentActivities] = useState<any[]>([]);
-  const [predictiveInsights, setPredictiveInsights] = useState<any>(null);
+  const [analytics, setAnalytics] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [lastRefreshed, setLastRefreshed] = useState<string>("");
+  const pollRef = useRef<any>(null);
 
   useEffect(() => {
-    loadStats();
-    loadRecentAlerts();
-    loadRecentActivities();
-    loadPredictiveInsights();
+    loadAllData();
+    pollRef.current = setInterval(() => {
+      loadAllData(true);
+    }, 8000);
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, []);
 
-  async function loadPredictiveInsights() {
+  async function loadAllData(silent = false) {
+    if (!silent) setLoading(true);
     try {
-      const res = await getAdminPredictiveInsights();
-      setPredictiveInsights(res.data.data);
-    } catch {
-      // Non-blocking fallback
-    }
-  }
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      if (!token) {
+        if (!silent) toast.error("No active session. Please log in as Admin.");
+        return;
+      }
 
-  async function loadStats() {
-    try {
-      const response = await getDashboardStats();
-      setStats(response.data.data);
-    } catch (error) {
-      console.error(error);
-      toast.error("Failed to load dashboard");
-    }
-  }
+      const results = await Promise.allSettled([
+        getDashboardStats(),
+        getActiveAlerts(),
+        getRecentActivities(),
+        getResponseAnalytics(),
+      ]);
 
-  async function loadRecentAlerts() {
-    try {
-      const res = await getRecentAlerts();
-      setRecentAlerts(res.data.data);
-    } catch {
-      toast.error("Failed to load recent alerts");
-    }
-  }
+      const [statsRes, alertsRes, actRes, analyticsRes] = results;
 
-  async function loadRecentActivities() {
-    try {
-      const res = await getRecentActivities();
-      setRecentActivities(res.data.data);
-    } catch {
-      toast.error("Failed to load activities");
+      if (statsRes.status === "fulfilled" && statsRes.value?.data?.data) {
+        setStats(statsRes.value.data.data);
+      }
+      if (alertsRes.status === "fulfilled" && alertsRes.value?.data?.data) {
+        setActiveIncidents(alertsRes.value.data.data);
+      }
+      if (actRes.status === "fulfilled" && actRes.value?.data?.data) {
+        setRecentActivities(actRes.value.data.data);
+      }
+      if (analyticsRes.status === "fulfilled" && analyticsRes.value?.data?.data) {
+        setAnalytics(analyticsRes.value.data.data);
+      }
+
+      const anyRejected = results.some((r) => r.status === "rejected");
+      if (anyRejected && !silent) {
+        const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+        const status = rejected?.reason?.response?.status;
+        if (status === 401 || status === 403) {
+          toast.error("Access denied or session expired. Please log in again as Admin.");
+        }
+      }
+
+      setLastRefreshed(new Date().toLocaleTimeString());
+    } catch (err: any) {
+      if (!silent) toast.error("Failed to sync command center data");
+    } finally {
+      if (!silent) setLoading(false);
     }
   }
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Admin overview"
-        desc="System-wide safety operations at a glance."
-      />
+      {/* Header with Live Status & Manual Refresh */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <span className="relative flex h-3 w-3">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-red-600"></span>
+            </span>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
+              Emergency Command Center
+            </h1>
+          </div>
+          <p className="text-sm text-muted-foreground mt-1">
+            Real-time incident dispatch control, responder coordination & active distress monitoring.
+          </p>
+        </div>
 
-      {/* Stats */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        <div className="flex items-center gap-3">
+          {lastRefreshed && (
+            <span className="text-xs text-muted-foreground hidden sm:inline-block">
+              Live sync: <span className="font-semibold text-foreground">{lastRefreshed}</span>
+            </span>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => loadAllData(false)}
+            disabled={loading}
+            className="text-xs"
+          >
+            <RefreshCw className={`size-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      {/* Top-Level Real-Time Command Center Statistics */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <StatCard
-          label="Total Users"
-          value={stats.totalUsers.toString()}
-          icon={<Users className="size-4" />}
-        />
-        <StatCard
-          label="Volunteers"
-          value={stats.totalVolunteers.toString()}
-          icon={<ShieldCheck className="size-4" />}
-          tone="success"
-        />
-        <StatCard
-          label="Active Alerts"
+          label="ACTIVE EMERGENCIES"
           value={stats.activeAlerts.toString()}
-          icon={<Siren className="size-4" />}
+          icon={<Siren className="size-5" />}
           tone="emergency"
         />
         <StatCard
-          label="Resolved Alerts"
-          value={stats.resolvedAlerts.toString()}
-          icon={<CheckCircle2 className="size-4" />}
-          tone="success"
+          label="CRITICAL P1 ALERTS"
+          value={stats.criticalIncidents.toString()}
+          icon={<ShieldAlert className="size-5 text-red-600" />}
+          tone="emergency"
         />
         <StatCard
-          label="Avg Response"
-          value="4m 12s"
-          icon={<Clock className="size-4" />}
+          label="RESPONDERS ACTIVE"
+          value={stats.respondersActive.toString()}
+          icon={<Radio className="size-5 text-blue-600" />}
           tone="warning"
         />
         <StatCard
-          label="Volunteer Rate"
-          value="96%"
-          icon={<Activity className="size-4" />}
+          label="PENDING VERIFICATIONS"
+          value={stats.pendingVerifications.toString()}
+          icon={<UserCheck className="size-5" />}
+        />
+        <StatCard
+          label="RESOLVED TODAY"
+          value={stats.resolvedToday.toString()}
+          icon={<CheckCircle2 className="size-5 text-emerald-600" />}
+          tone="success"
         />
       </div>
 
-      {/* Recent Data */}
-      <div className="grid gap-6 lg:grid-cols-2">
+      {/* Prominent ACTIVE EMERGENCIES Section */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Siren className="size-5 text-red-600 animate-pulse" />
+            <h2 className="text-lg font-bold text-foreground">
+              Active Emergencies ({activeIncidents.length})
+            </h2>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate({ to: "/admin/monitoring" })}
+            className="text-xs text-primary font-semibold hover:underline"
+          >
+            Open Live Map Monitor &rarr;
+          </Button>
+        </div>
 
-        {/* Recent SOS Alerts — with AI Voice metadata */}
-        <div className="rounded-2xl border bg-card p-6 shadow-sm">
-          <h3 className="mb-5 font-semibold">Recent SOS Alerts</h3>
-
-          {recentAlerts.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-6">No alerts yet.</p>
-          ) : (
-            <div className="space-y-3">
-              {recentAlerts.map((alert: any) => (
+        {activeIncidents.length === 0 ? (
+          <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-8 text-center">
+            <CheckCircle2 className="size-10 text-emerald-600 mx-auto mb-2" />
+            <h3 className="font-semibold text-base text-foreground">All Clear & Safe</h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              No active distress incidents at this moment. The system is actively listening for emergency signals.
+            </p>
+          </div>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {activeIncidents.map((incident: any) => {
+              const isP1 = incident.priority === "P1" || incident.riskLevel === "CRITICAL";
+              return (
                 <div
-                  key={alert._id}
-                  className={`rounded-xl border p-4 ${
-                    alert.source === "AI_VOICE"
-                      ? "border-purple-200 bg-purple-500/5 dark:border-purple-700"
-                      : alert.source === "AI_MOVEMENT"
-                      ? "border-blue-200 bg-blue-500/5 dark:border-blue-700"
-                      : alert.source === "AI_FUSION"
-                      ? "border-rose-200 bg-rose-500/5 dark:border-rose-700"
-                      : ""
+                  key={incident._id}
+                  className={`rounded-2xl border p-5 shadow-sm transition-all flex flex-col justify-between ${
+                    isP1
+                      ? "border-red-500/60 bg-red-500/5 ring-1 ring-red-500/20"
+                      : "border-amber-400/60 bg-amber-500/5"
                   }`}
                 >
-                  {/* Top row: user + source + status */}
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-semibold text-sm">{alert.user?.name}</p>
-
-                      {/* Source badge */}
-                      {alert.source === "AI_VOICE" ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 text-[10px] font-bold px-2 py-0.5 border border-purple-300">
-                          <Bot className="size-2.5" />
-                          AI VOICE
-                        </span>
-                      ) : alert.source === "AI_MOVEMENT" ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-[10px] font-bold px-2 py-0.5 border border-blue-300">
-                          <Activity className="size-2.5" />
-                          AI MOVEMENT
-                        </span>
-                      ) : alert.source === "AI_FUSION" ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 text-[10px] font-bold px-2 py-0.5 border border-rose-300">
-                          <Layers className="size-2.5" />
-                          AI FUSION
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-[10px] font-bold px-2 py-0.5 border border-red-300">
-                          <Siren className="size-2.5" />
-                          MANUAL
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="text-right shrink-0">
+                  <div className="space-y-3">
+                    {/* Header: Priority & State */}
+                    <div className="flex items-center justify-between gap-2">
                       <span
-                        className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                          alert.status === "active"
-                            ? "bg-red-100 text-red-600"
-                            : alert.status === "accepted"
-                            ? "bg-yellow-100 text-yellow-700"
-                            : "bg-green-100 text-green-700"
+                        className={`text-xs font-black px-2.5 py-1 rounded-full ${
+                          isP1 ? "bg-red-600 text-white animate-pulse" : "bg-amber-500 text-white"
                         }`}
                       >
-                        {alert.status}
+                        🚨 {incident.priority || "P1"} — {incident.riskLevel || "CRITICAL"}
                       </span>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {new Date(alert.createdAt).toLocaleString()}
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-card border text-foreground">
+                        {incident.responseStatus || incident.status}
+                      </span>
+                    </div>
+
+                    {/* Metadata summary */}
+                    <div>
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>Incident: #{incident._id.slice(-6)}</span>
+                        <span className="font-bold text-foreground">
+                          Risk: {incident.riskScore || incident.finalRiskScore || 90}/100
+                        </span>
+                      </div>
+                      <h4 className="font-bold text-base text-foreground mt-1">
+                        {incident.user?.name || "SafeHer User in Distress"}
+                      </h4>
+                      <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                        <MapPin className="size-3 text-red-500 shrink-0" />
+                        {incident.latitude.toFixed(4)}, {incident.longitude.toFixed(4)} ({incident.source})
                       </p>
                     </div>
+
+                    {/* Responder block */}
+                    <div className="rounded-xl border bg-card/80 p-3 text-xs space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Assigned Responder:</span>
+                        <span className="font-semibold text-primary">
+                          {incident.acceptedBy?.name ||
+                            incident.assignedVolunteerId?.name ||
+                            incident.assignedVolunteerName ||
+                            "Searching candidate..."}
+                        </span>
+                      </div>
+                      {incident.estimatedEtaMinutes != null && (
+                        <div className="flex items-center justify-between text-emerald-600">
+                          <span>Estimated ETA:</span>
+                          <span className="font-bold">~{incident.estimatedEtaMinutes} min</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
-                  {/* Location */}
-                  <p className="text-xs text-muted-foreground mt-1">
-                    📍 {alert.latitude}, {alert.longitude}
-                  </p>
-
-                  {/* AI Voice metadata row */}
-                  {alert.source === "AI_VOICE" && (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {alert.riskLevel && (
-                        <span
-                          className={`text-[11px] font-semibold rounded-full px-2 py-0.5 ${
-                            alert.riskLevel === "CRITICAL"
-                              ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300"
-                              : alert.riskLevel === "HIGH"
-                              ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
-                              : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
-                          }`}
-                        >
-                          Risk: {alert.riskLevel} ({alert.riskScore}/100)
-                        </span>
-                      )}
-                      {alert.distressType && (
-                        <span className="text-[11px] bg-muted rounded-full px-2 py-0.5 capitalize">
-                          Detection: <strong>{alert.distressType}</strong>
-                        </span>
-                      )}
-                      {alert.detectedKeywords?.length > 0 && (
-                        <span className="text-[11px] text-red-500 font-medium rounded-full bg-red-100 dark:bg-red-900/20 px-2 py-0.5">
-                          🔑 {alert.detectedKeywords.join(", ")}
-                        </span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* AI Movement metadata row */}
-                  {alert.source === "AI_MOVEMENT" && (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {alert.riskLevel && (
-                        <span className={`text-[11px] font-semibold rounded-full px-2 py-0.5 ${
-                          alert.riskLevel === "CRITICAL" ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300"
-                          : alert.riskLevel === "HIGH" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
-                          : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
-                        }`}>
-                          Risk: {alert.riskLevel} ({alert.movementRiskScore ?? alert.riskScore}/100)
-                        </span>
-                      )}
-                      {alert.movementAnomalyType && (
-                        <span className="text-[11px] bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border border-blue-200 rounded-full px-2 py-0.5 capitalize">
-                          Anomaly: <strong>{alert.movementAnomalyType.replace(/_/g, " ")}</strong>
-                        </span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* AI Fusion metadata row */}
-                  {alert.source === "AI_FUSION" && (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {alert.finalRiskScore != null && (
-                        <span className={`text-[11px] font-semibold rounded-full px-2 py-0.5 ${
-                          alert.riskLevel === "CRITICAL" ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300"
-                          : alert.riskLevel === "HIGH" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
-                          : "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300"
-                        }`}>
-                          Final Score: {alert.finalRiskScore}/100
-                        </span>
-                      )}
-                      {alert.fusionSource && (
-                        <span className="text-[11px] bg-muted rounded-full px-2 py-0.5">
-                          Fusion: <strong>{alert.fusionSource}</strong>
-                        </span>
-                      )}
-                      {alert.riskScore != null && (
-                        <span className="text-[11px] text-purple-600 bg-purple-50 dark:bg-purple-900/20 rounded-full px-2 py-0.5">V:{alert.riskScore}</span>
-                      )}
-                      {alert.movementRiskScore != null && (
-                        <span className="text-[11px] text-blue-600 bg-blue-50 dark:bg-blue-900/20 rounded-full px-2 py-0.5">M:{alert.movementRiskScore}</span>
-                      )}
-                      {alert.gpsContextScore != null && (
-                        <span className="text-[11px] text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 rounded-full px-2 py-0.5">G:{alert.gpsContextScore}</span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Maps link */}
-                  <a
-                    href={`https://www.google.com/maps?q=${alert.latitude},${alert.longitude}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-[11px] text-primary hover:underline mt-1 inline-block"
-                  >
-                    View on Map →
-                  </a>
+                  {/* Actions */}
+                  <div className="mt-4 pt-3 border-t flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      className="flex-1 bg-red-600 hover:bg-red-700 text-white text-xs font-bold"
+                      onClick={() => navigate({ to: "/admin/monitoring" })}
+                    >
+                      <Radio className="size-3.5 mr-1" />
+                      MONITOR LIVE
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs"
+                      onClick={() => navigate({ to: "/admin/monitoring" })}
+                    >
+                      <Eye className="size-3.5 mr-1" />
+                      VIEW
+                    </Button>
+                  </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
-        {/* Recent Activities */}
+      {/* Bottom Grid: AI Dispatch Matrix & Live Responder Activity Log */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Phase 4 AI Emergency Dispatch Matrix */}
+        {analytics && (
+          <div className="rounded-2xl border bg-card p-6 shadow-sm">
+            <h3 className="font-semibold text-lg flex items-center justify-between mb-4">
+              <span className="flex items-center gap-2">
+                <Bot className="size-5 text-primary" /> AI Emergency Dispatch Matrix
+              </span>
+              <span className="text-xs text-muted-foreground font-normal">Real-Time Performance</span>
+            </h3>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs mb-4">
+              <div className="bg-muted/40 p-3 rounded-xl border">
+                <span className="text-muted-foreground block">P1 Critical Cases</span>
+                <span className="text-xl font-extrabold text-red-600">{analytics.priorityBreakdown?.P1 || 0}</span>
+              </div>
+              <div className="bg-muted/40 p-3 rounded-xl border">
+                <span className="text-muted-foreground block">P2 High Priority</span>
+                <span className="text-xl font-extrabold text-amber-600">{analytics.priorityBreakdown?.P2 || 0}</span>
+              </div>
+              <div className="bg-muted/40 p-3 rounded-xl border">
+                <span className="text-muted-foreground block">Avg Assignment</span>
+                <span className="text-xl font-extrabold text-foreground">{analytics.summary?.avgAssignmentFormatted || "42s"}</span>
+              </div>
+              <div className="bg-muted/40 p-3 rounded-xl border">
+                <span className="text-muted-foreground block">Acceptance Rate</span>
+                <span className="text-xl font-extrabold text-emerald-600">{analytics.summary?.acceptanceRate || 96}%</span>
+              </div>
+            </div>
+
+            <div className="text-xs text-muted-foreground border-t pt-3 flex items-center justify-between">
+              <span>Average Total Resolution Time:</span>
+              <span className="font-bold text-foreground">{analytics.summary?.avgResponseFormatted || "3m 12s"}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Live Responder Activity Log */}
         <div className="rounded-2xl border bg-card p-6 shadow-sm">
-          <h3 className="mb-5 font-semibold">Recent Activities</h3>
+          <h3 className="mb-4 font-semibold text-lg flex items-center gap-2">
+            <Activity className="size-5 text-primary" /> Live Responder Operations Log
+          </h3>
 
           {recentActivities.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-6">No recent activities.</p>
+            <p className="text-sm text-muted-foreground text-center py-8">No recent responder activity logged.</p>
           ) : (
-            <div className="space-y-5">
-              {recentActivities.map((activity: any, index) => (
-                <div key={index} className="flex items-center gap-3">
-                  <div className="h-3 w-3 rounded-full bg-primary shrink-0" />
-                  <div>
-                    <p className="font-medium text-sm">{activity.title}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {new Date(activity.time).toLocaleString()}
-                    </p>
+            <div className="space-y-3">
+              {recentActivities.slice(0, 5).map((act: any, idx: number) => (
+                <div key={idx} className="flex items-start gap-3 rounded-xl border p-3 text-sm">
+                  <div className="size-2 rounded-full bg-primary mt-1.5 shrink-0 animate-pulse" />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-foreground text-xs">{act.title}</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">
+                      {new Date(act.time).toLocaleTimeString()} · {new Date(act.time).toLocaleDateString()}
+                    </div>
                   </div>
                 </div>
               ))}
             </div>
           )}
-        </div>
-      </div>
-
-      {/* Phase 3: Predictive Safety Intelligence & Proactive Insights */}
-      <div className="rounded-2xl border bg-gradient-to-br from-card via-card to-purple-500/5 p-6 shadow-sm border-purple-500/20">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-          <div className="flex items-center gap-2">
-            <span className="p-2 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400">
-              <Sparkles className="size-4" />
-            </span>
-            <div>
-              <h3 className="font-semibold">Predictive Safety Intelligence (Phase 3)</h3>
-              <p className="text-xs text-muted-foreground">Proactive risk forecasting and spatial hotspot telemetry</p>
-            </div>
-          </div>
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
-            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-            Predictive Model Online
-          </span>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-3">
-          <div className="p-4 rounded-xl border bg-card/60 space-y-1">
-            <p className="text-xs text-muted-foreground">Total Proactive Telemetry</p>
-            <p className="text-2xl font-bold">{predictiveInsights?.totalTelemetryPoints ?? 0}</p>
-            <p className="text-xs text-muted-foreground">Evaluations logged</p>
-          </div>
-          <div className="p-4 rounded-xl border bg-card/60 space-y-1">
-            <p className="text-xs text-muted-foreground">High Caution Corridors</p>
-            <p className="text-2xl font-bold text-amber-500">{predictiveInsights?.highCautionProactiveAlerts ?? 0}</p>
-            <p className="text-xs text-muted-foreground">Early warning events</p>
-          </div>
-          <div className="p-4 rounded-xl border bg-card/60 space-y-1">
-            <p className="text-xs text-muted-foreground">Safe Zone Coverage Score</p>
-            <p className="text-2xl font-bold text-purple-600">{predictiveInsights?.spatialCoverageScore ?? 88.5}%</p>
-            <p className="text-xs text-muted-foreground">Spatial density index</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Quick Actions */}
-      <div className="rounded-2xl border bg-card p-6 shadow-sm">
-        <h3 className="mb-5 font-semibold">Quick Actions</h3>
-
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <button
-            onClick={() => navigate({ to: "/admin/monitoring" })}
-            className="rounded-xl border p-5 hover:bg-muted transition text-left"
-          >
-            🚨
-            <p className="mt-2 font-semibold">View Active SOS</p>
-            <p className="text-sm text-muted-foreground">Monitor all ongoing emergencies</p>
-          </button>
-
-          <button
-            onClick={() => navigate({ to: "/admin/volunteers" })}
-            className="rounded-xl border p-5 hover:bg-muted transition text-left"
-          >
-            👮
-            <p className="mt-2 font-semibold">Manage Volunteers</p>
-            <p className="text-sm text-muted-foreground">Verify and assign volunteers</p>
-          </button>
-
-          <button
-            onClick={() => navigate({ to: "/admin/safe-zones" })}
-            className="rounded-xl border p-5 hover:bg-muted transition text-left"
-          >
-            📍
-            <p className="mt-2 font-semibold">Safe Zones</p>
-            <p className="text-sm text-muted-foreground">Add or update safe locations</p>
-          </button>
-
-          <button
-            onClick={() => navigate({ to: "/admin/reports" })}
-            className="rounded-xl border p-5 hover:bg-muted transition text-left"
-          >
-            📄
-            <p className="mt-2 font-semibold">Reports</p>
-            <p className="text-sm text-muted-foreground">Generate system reports</p>
-          </button>
         </div>
       </div>
     </div>

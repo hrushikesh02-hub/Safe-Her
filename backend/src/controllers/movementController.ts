@@ -3,7 +3,7 @@ import Alert from "../models/Alert";
 import mongoose from "mongoose";
 import { AuthRequest } from "../middleware/authMiddleware";
 import { analyzeMovement, analyzeGPSContext } from "../services/movementAIService";
-import { notifyContactsAndVolunteers } from "./alertController";
+import { EmergencyDispatchService } from "../services/emergencyDispatchService";
 import SafeZone from "../models/SafeZone";
 
 const MOVEMENT_CRITICAL_THRESHOLD = parseInt(
@@ -147,18 +147,20 @@ export const triggerMovementSOS = async (
 
     console.log(`✅ AI Movement SOS created: ${alert._id}`);
 
-    // Fire-and-forget notifications
-    notifyContactsAndVolunteers(
+    // Fire-and-forget Phase 4 Dispatch Engine
+    EmergencyDispatchService.initiateEmergencyDispatch({
+      alertId: (alert._id as mongoose.Types.ObjectId).toString(),
       userId,
-      (alert._id as mongoose.Types.ObjectId).toString(),
-      lat,
-      lng,
-      "AI_MOVEMENT",
-      riskLevel || "HIGH",
-      movementRiskScore || 0,
-      movementAnomalyType || "unknown",
-      []
-    ).catch((err) => console.error("Movement SOS notification error:", err));
+      latitude: lat,
+      longitude: lng,
+      source: "AI_MOVEMENT",
+      riskLevel: riskLevel || "HIGH",
+      riskScore: movementRiskScore || 75,
+      movementAnomaly: movementAnomalyType || "abnormal_movement",
+      routeDeviated: routeDeviated || false,
+      suddenStop: suddenStop || false,
+      gpsContextScore: gpsContextScore || undefined,
+    }).catch((err) => console.error("Movement SOS dispatch error:", err));
 
     res.status(201).json({
       success: true,

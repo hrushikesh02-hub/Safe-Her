@@ -6,13 +6,14 @@ export interface MapMarker {
   longitude: number;
   title?: string;
   popupContent?: string | HTMLElement;
-  iconType?: "user" | "police" | "hospital" | "safe_zone" | "danger";
+  iconType?: "user" | "emergency" | "responder" | "police" | "hospital" | "safe_zone" | "danger";
 }
 
 interface OSMMapProps {
   center: { lat: number; lng: number };
   zoom?: number;
   markers?: MapMarker[];
+  routeCoordinates?: [number, number][];
   className?: string;
   style?: React.CSSProperties;
   onMapClick?: (lat: number, lng: number) => void;
@@ -23,6 +24,7 @@ export default function OSMMap({
   center,
   zoom = 15,
   markers = [],
+  routeCoordinates = [],
   className = "w-full h-[500px] rounded-2xl overflow-hidden border shadow-sm",
   style,
   onMapClick,
@@ -30,6 +32,7 @@ export default function OSMMap({
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<any>(null);
   const markersLayerRef = useRef<any>(null);
+  const routeLayerRef = useRef<any>(null);
   const [isClient, setIsClient] = useState(false);
 
   useEffect(() => {
@@ -41,7 +44,7 @@ export default function OSMMap({
 
     let isMounted = true;
 
-    // Dynamically load leaflet only in browser
+    // Dynamically load leaflet in browser
     import("leaflet").then((leafletModule) => {
       if (!isMounted || !mapContainerRef.current) return;
       const L = leafletModule.default || leafletModule;
@@ -67,8 +70,8 @@ export default function OSMMap({
           maxZoom: 19,
         }).addTo(map);
 
-        const markersLayer = L.layerGroup().addTo(map);
-        markersLayerRef.current = markersLayer;
+        markersLayerRef.current = L.layerGroup().addTo(map);
+        routeLayerRef.current = L.layerGroup().addTo(map);
 
         if (onMapClick) {
           map.on("click", (e: any) => {
@@ -86,7 +89,31 @@ export default function OSMMap({
         markers.forEach((m) => {
           if (m.latitude && m.longitude) {
             let icon;
-            if (m.iconType === "user") {
+            if (m.iconType === "emergency") {
+              icon = L.divIcon({
+                className: "custom-emergency-marker",
+                html: `
+                  <div style="position: relative; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">
+                    <div style="position: absolute; width: 32px; height: 32px; background: rgba(220, 38, 38, 0.45); border-radius: 50%; animation: ping 1.2s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>
+                    <div style="position: relative; width: 18px; height: 18px; background: #dc2626; border: 3px solid white; border-radius: 50%; box-shadow: 0 3px 8px rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; color: white; font-size: 9px; font-weight: 900;">!</div>
+                  </div>
+                `,
+                iconSize: [32, 32],
+                iconAnchor: [16, 16],
+              });
+            } else if (m.iconType === "responder") {
+              icon = L.divIcon({
+                className: "custom-responder-marker",
+                html: `
+                  <div style="position: relative; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">
+                    <div style="position: absolute; width: 28px; height: 28px; background: rgba(37, 99, 235, 0.35); border-radius: 50%; animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;"></div>
+                    <div style="position: relative; width: 16px; height: 16px; background: #2563eb; border: 2.5px solid white; border-radius: 50%; box-shadow: 0 2px 6px rgba(0,0,0,0.35);"></div>
+                  </div>
+                `,
+                iconSize: [32, 32],
+                iconAnchor: [16, 16],
+              });
+            } else if (m.iconType === "user") {
               icon = L.divIcon({
                 className: "custom-user-marker",
                 html: `
@@ -138,19 +165,38 @@ export default function OSMMap({
           }
         });
       }
+
+      // Render route polyline if available
+      if (routeLayerRef.current) {
+        routeLayerRef.current.clearLayers();
+        if (routeCoordinates && routeCoordinates.length >= 2) {
+          const polyline = L.polyline(routeCoordinates, {
+            color: "#2563eb",
+            weight: 4,
+            dashArray: "6, 8",
+            opacity: 0.85,
+          });
+          routeLayerRef.current.addLayer(polyline);
+
+          // Fit bounds to show both user and responder
+          if (mapInstanceRef.current) {
+            mapInstanceRef.current.fitBounds(polyline.getBounds(), { padding: [40, 40] });
+          }
+        }
+      }
     });
 
     return () => {
       isMounted = false;
     };
-  }, [isClient, center.lat, center.lng, markers]);
+  }, [isClient, center.lat, center.lng, markers, routeCoordinates]);
 
   // Handle center pan
   useEffect(() => {
-    if (mapInstanceRef.current && center.lat && center.lng) {
+    if (mapInstanceRef.current && center.lat && center.lng && (!routeCoordinates || routeCoordinates.length < 2)) {
       mapInstanceRef.current.panTo([center.lat, center.lng], { animate: true });
     }
-  }, [center.lat, center.lng]);
+  }, [center.lat, center.lng, routeCoordinates]);
 
   // Clean up
   useEffect(() => {

@@ -2,140 +2,51 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { CheckCircle2 } from "lucide-react";
+import {
+  CheckCircle2,
+  Clock,
+  MapPin,
+  Navigation,
+  ShieldAlert,
+  Bot,
+  Activity,
+  Siren,
+  Sparkles,
+  Phone,
+  User as UserIcon,
+  Calendar,
+  Layers,
+} from "lucide-react";
 import { toast } from "sonner";
 import MapView from "@/components/MapView";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getAlertById, resolveAlert } from "@/services/volunteerService";
+import {
+  getAlertById,
+  acceptAlert,
+  rejectAlert,
+  startResponse,
+  markNearby,
+  markArrived,
+  resolveAlert,
+  updateResponderLiveLocation,
+  AlertDetail,
+  TimelineEvent,
+} from "@/services/volunteerService";
 
 export const Route = createFileRoute("/volunteer/incidents/$id")({
   component: IncidentDetails,
 });
 
-// =====================================================
-// TYPES
-// =====================================================
-
-type AlertStatus = "active" | "accepted" | "resolved";
-
-interface AlertUser {
-  _id: string;
-  name?: string;
-  phone?: string;
-  email?: string;
-  profileImage?: string;
-}
-
-interface AcceptedVolunteer {
-  _id: string;
-  name?: string;
-}
-
-interface Alert {
-  _id: string;
-  latitude: number;
-  longitude: number;
-  status: AlertStatus;
-  createdAt: string;
-  updatedAt: string;
-  user?: AlertUser;
-  acceptedBy?: AcceptedVolunteer;
-}
-
-interface TimelineEntry {
-  label: string;
-  time: string;
-}
-
-interface BackendResponse<T> {
-  success: boolean;
-  message?: string;
-  data: T;
-}
-
-const POLL_INTERVAL_MS = 5000;
-
-// =====================================================
-// HELPERS
-// =====================================================
-
-function formatDateTime(value?: string): string {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString();
-}
-
-function formatStatusLabel(status?: AlertStatus): string {
-  if (!status) return "Pending";
-  return status.charAt(0).toUpperCase() + status.slice(1);
-}
-
-function buildTimeline(alert: Alert | null): TimelineEntry[] {
-  if (!alert) return [];
-
-  const entries: TimelineEntry[] = [
-    { label: "Alert Created", time: formatDateTime(alert.createdAt) },
-  ];
-
-  if (alert.status === "accepted" || alert.status === "resolved") {
-    entries.push({
-      label: alert.acceptedBy?.name
-        ? `Accepted by ${alert.acceptedBy.name}`
-        : "Accepted by Volunteer",
-      time: formatDateTime(alert.updatedAt),
-    });
-  }
-
-  if (alert.status === "resolved") {
-    entries.push({
-      label: "Resolved",
-      time: formatDateTime(alert.updatedAt),
-    });
-  }
-
-  return entries;
-}
-
-function getErrorStatusCode(error: unknown): number | undefined {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "response" in error &&
-    typeof (error as { response?: { status?: number } }).response === "object"
-  ) {
-    return (error as { response?: { status?: number } }).response?.status;
-  }
-  return undefined;
-}
-
-function getErrorMessage(error: unknown, fallback: string): string {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "response" in error &&
-    typeof (error as { response?: { data?: { message?: string } } }).response === "object"
-  ) {
-    const message = (error as { response?: { data?: { message?: string } } }).response?.data
-      ?.message;
-    if (message) return message;
-  }
-  return fallback;
-}
-
-// =====================================================
-// COMPONENT
-// =====================================================
+const POLL_INTERVAL_MS = 4000;
 
 function IncidentDetails() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
 
-  const [alert, setAlert] = useState<Alert | null>(null);
+  const [alert, setAlert] = useState<AlertDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [notFound, setNotFound] = useState(false);
-  const [accessDenied, setAccessDenied] = useState(false);
-  const [resolving, setResolving] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [liveLocationWatcher, setLiveLocationWatcher] = useState<number | null>(null);
 
   const isMountedRef = useRef(true);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -155,21 +66,16 @@ function IncidentDetails() {
 
       try {
         const response = await getAlertById(id);
-        const body = response.data as BackendResponse<Alert>;
-
         if (!isMountedRef.current) return;
 
-        setAlert(body.data);
-        setNotFound(false);
-        setAccessDenied(false);
+        setAlert(response.data.data);
 
-        if (body.data.status === "resolved") {
+        if (response.data.data.status === "resolved") {
           clearPolling();
         }
-      } catch (error: unknown) {
+      } catch (error: any) {
         if (!isMountedRef.current) return;
-
-        const status = getErrorStatusCode(error);
+        const status = error?.response?.status;
 
         if (status === 401) {
           clearPolling();
@@ -178,30 +84,11 @@ function IncidentDetails() {
           return;
         }
 
-        if (status === 403) {
-          clearPolling();
-          setAccessDenied(true);
-          return;
-        }
-
-        if (status === 404) {
-          clearPolling();
-          setNotFound(true);
-          return;
-        }
-
-        if (status === 500) {
-          toast.error("Server error while loading alert.");
-          return;
-        }
-
-        // Network failure or unknown error: fail silently in the background,
-        // the next poll (or the user) will retry automatically.
         if (!isBackground) {
-          toast.error("Unable to load alert");
+          toast.error("Failed to load incident details");
         }
       } finally {
-        if (isMountedRef.current && !isBackground) {
+        if (!isBackground && isMountedRef.current) {
           setLoading(false);
         }
       }
@@ -209,230 +96,447 @@ function IncidentDetails() {
     [id, navigate, clearPolling]
   );
 
-  // Initial load
   useEffect(() => {
     isMountedRef.current = true;
-    if (id) {
-      loadAlert(false);
-    }
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, [id, loadAlert]);
-
-  // Polling — every 5s until resolved, stopped on unmount
-  useEffect(() => {
-    if (!id) return;
-
-    clearPolling();
+    loadAlert(false);
 
     pollRef.current = setInterval(() => {
       loadAlert(true);
     }, POLL_INTERVAL_MS);
 
     return () => {
+      isMountedRef.current = false;
       clearPolling();
-    };
-  }, [id, loadAlert, clearPolling]);
-
-  // Stop polling immediately once resolved
-  useEffect(() => {
-    if (alert?.status === "resolved") {
-      clearPolling();
-    }
-  }, [alert?.status, clearPolling]);
-
-  const handleResolved = useCallback(async () => {
-    if (resolving) return;
-
-    setResolving(true);
-
-    try {
-      await resolveAlert(id);
-      toast.success("Incident Resolved");
-      await loadAlert(false);
-    } catch (error: unknown) {
-      toast.error(getErrorMessage(error, "Failed to resolve alert"));
-    } finally {
-      if (isMountedRef.current) {
-        setResolving(false);
+      if (liveLocationWatcher != null) {
+        navigator.geolocation.clearWatch(liveLocationWatcher);
       }
-    }
-  }, [id, resolving, loadAlert]);
+    };
+  }, [loadAlert, clearPolling, liveLocationWatcher]);
 
-  const timeline = buildTimeline(alert);
+  // Live GPS tracking when responding
+  useEffect(() => {
+    if (
+      alert &&
+      (alert.responseStatus === "RESPONDING" ||
+        alert.responseStatus === "NEARBY" ||
+        alert.status === "accepted") &&
+      navigator.geolocation &&
+      liveLocationWatcher == null
+    ) {
+      const watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          updateResponderLiveLocation(id, pos.coords.latitude, pos.coords.longitude).catch((e) =>
+            console.warn("Live location sync failed:", e?.message)
+          );
+        },
+        (err) => console.warn("Watch position error:", err),
+        { enableHighAccuracy: true, timeout: 8000 }
+      );
+      setLiveLocationWatcher(watchId);
+    }
+  }, [alert, id, liveLocationWatcher]);
+
+  async function handleAccept() {
+    setActionLoading(true);
+    try {
+      await acceptAlert(id);
+      toast.success("Emergency Dispatch Accepted! You are now responding.");
+      loadAlert(false);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Failed to accept dispatch");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function handleStartResponse() {
+    setActionLoading(true);
+    try {
+      await startResponse(id);
+      toast.success("Response Started. Live GPS routing enabled.");
+      loadAlert(false);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Failed to start response");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function handleMarkNearby() {
+    setActionLoading(true);
+    try {
+      await markNearby(id);
+      toast.success("Marked Nearby. Incident user notified of your proximity.");
+      loadAlert(false);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Failed to update status");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function handleMarkArrived() {
+    setActionLoading(true);
+    try {
+      await markArrived(id);
+      toast.success("Marked Arrived on Scene. Providing on-site support.");
+      loadAlert(false);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Failed to mark arrived");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function handleResolve() {
+    const notes = window.prompt("Enter incident resolution notes (optional):") || "";
+    setActionLoading(true);
+    try {
+      await resolveAlert(id, notes);
+      toast.success("Incident successfully resolved! AI summary formulated.");
+      loadAlert(false);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Failed to resolve incident");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  if (loading && !alert) {
+    return (
+      <div className="p-8 text-center">
+        <p className="text-muted-foreground animate-pulse">Loading incident coordination center...</p>
+      </div>
+    );
+  }
+
+  if (!alert) {
+    return (
+      <div className="p-8 text-center">
+        <p className="text-destructive font-semibold">Incident record not found.</p>
+        <Button onClick={() => navigate({ to: "/volunteer/dashboard" })} className="mt-4">
+          Back to Dashboard
+        </Button>
+      </div>
+    );
+  }
+
+  const timeline = alert.responseTimeline || [];
+  const statusSteps = [
+    { key: "NOTIFIED", label: "Notified" },
+    { key: "ASSIGNED", label: "Assigned" },
+    { key: "RESPONDING", label: "En Route" },
+    { key: "NEARBY", label: "Nearby (<300m)" },
+    { key: "ARRIVED", label: "On Scene" },
+    { key: "RESOLVED", label: "Resolved" },
+  ];
+
+  const currentStatus = alert.responseStatus || (alert.status === "resolved" ? "RESOLVED" : alert.status === "accepted" ? "RESPONDING" : "ASSIGNED");
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Incident details"
-        desc={`Alert ID · ${id}`}
-        action={<StatusBadge status={formatStatusLabel(alert?.status)} />}
+        title={`Incident #${alert._id.slice(-6)}`}
+        desc={`Emergency Response Coordination Hub — ${alert.source}`}
+        action={
+          <div className="flex items-center gap-2">
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-bold ${
+                alert.priority === "P1"
+                  ? "bg-red-600 text-white animate-pulse"
+                  : alert.priority === "P2"
+                  ? "bg-amber-500 text-white"
+                  : "bg-blue-500 text-white"
+              }`}
+            >
+              {alert.priority || "P1"} PRIORITY
+            </span>
+            <StatusBadge status={alert.status === "resolved" ? "Resolved" : alert.status === "accepted" ? "In Progress" : "Pending"} />
+          </div>
+        }
       />
 
-      {accessDenied ? (
-        <div className="rounded-2xl border bg-card p-10 text-center shadow-sm">
-          <p className="text-sm text-muted-foreground">Access Denied</p>
+      {/* State Machine Stepper */}
+      <div className="rounded-2xl border bg-card p-4 shadow-sm">
+        <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+          Response State Machine
         </div>
-      ) : notFound ? (
-        <div className="rounded-2xl border bg-card p-10 text-center shadow-sm">
-          <p className="text-sm text-muted-foreground">Alert not found.</p>
+        <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
+          {statusSteps.map((s, idx) => {
+            const isPassed =
+              statusSteps.findIndex((x) => x.key === currentStatus) >= idx ||
+              alert.status === "resolved";
+            const isCurrent = currentStatus === s.key;
+            return (
+              <div
+                key={s.key}
+                className={`p-2.5 rounded-lg border text-center text-xs font-semibold transition-all ${
+                  isCurrent
+                    ? "border-primary bg-primary/10 text-primary ring-2 ring-primary/20"
+                    : isPassed
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                    : "border-border text-muted-foreground opacity-60"
+                }`}
+              >
+                <div className="text-[10px] text-muted-foreground">Step {idx + 1}</div>
+                <div>{s.label}</div>
+              </div>
+            );
+          })}
         </div>
-      ) : loading && !alert ? (
-        <IncidentSkeleton />
-      ) : (
-        <div className="grid gap-6 lg:grid-cols-[1fr,360px]">
-          <div className="space-y-4">
-            {alert && <MapView latitude={alert.latitude} longitude={alert.longitude} />}
+      </div>
 
-            <div className="rounded-2xl border bg-card p-6 shadow-sm">
-              <h3 className="font-semibold">Timeline</h3>
-              <ol className="mt-4 space-y-3">
-                {timeline.map((t, i) => (
-                  <li key={i} className="flex gap-3">
-                    <div className="grid size-7 place-items-center rounded-full bg-primary/10 text-xs font-bold text-primary">
-                      {i + 1}
-                    </div>
-                    <div>
-                      <div className="text-sm font-medium">{t.label}</div>
-                      <div className="text-xs text-muted-foreground">{t.time}</div>
-                    </div>
-                  </li>
-                ))}
-              </ol>
+      {/* Primary Actions & Info Banner */}
+      <div className="grid gap-6 lg:grid-cols-3">
+        {/* Left 2 Cols: Map & Location */}
+        <div className="space-y-6 lg:col-span-2">
+          <div className="rounded-2xl border bg-card p-6 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-semibold text-lg flex items-center gap-2">
+                <MapPin className="size-5 text-red-500" /> Emergency Incident Location
+              </h2>
+              {alert.estimatedEtaMinutes != null && (
+                <span className="text-xs font-bold text-primary bg-primary/10 px-2.5 py-1 rounded-full flex items-center gap-1">
+                  <Clock className="size-3.5" /> Estimated ETA: ~{alert.estimatedEtaMinutes} min
+                </span>
+              )}
+            </div>
+
+            <div className="h-72 w-full rounded-xl overflow-hidden border">
+              <MapView latitude={alert.latitude} longitude={alert.longitude} />
+            </div>
+
+            {/* Quick Actions Row */}
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              {alert.status === "active" && (
+                <Button
+                  onClick={handleAccept}
+                  disabled={actionLoading}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white flex-1"
+                >
+                  <CheckCircle2 className="size-4 mr-2" />
+                  Accept Emergency Assignment
+                </Button>
+              )}
+
+              {alert.status === "accepted" && alert.responseStatus !== "ARRIVED" && (
+                <>
+                  <Button
+                    onClick={handleStartResponse}
+                    disabled={actionLoading || alert.responseStatus === "RESPONDING"}
+                    variant="outline"
+                    className="flex-1"
+                  >
+                    <Navigation className="size-4 mr-2 text-primary" />
+                    En Route Navigation
+                  </Button>
+                  <Button
+                    onClick={handleMarkNearby}
+                    disabled={actionLoading || alert.responseStatus === "NEARBY"}
+                    variant="outline"
+                    className="flex-1"
+                  >
+                    <MapPin className="size-4 mr-2 text-amber-500" />
+                    Mark Proximity Nearby (&lt;300m)
+                  </Button>
+                  <Button
+                    onClick={handleMarkArrived}
+                    disabled={actionLoading}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white flex-1"
+                  >
+                    <CheckCircle2 className="size-4 mr-2" />
+                    Mark Arrived on Scene
+                  </Button>
+                </>
+              )}
+
+              {alert.status !== "resolved" && (
+                <Button
+                  onClick={handleResolve}
+                  disabled={actionLoading}
+                  variant="destructive"
+                  className="flex-1"
+                >
+                  Resolve Incident
+                </Button>
+              )}
+
+              <Button asChild variant="outline">
+                <a
+                  href={`https://www.google.com/maps/dir/?api=1&destination=${alert.latitude},${alert.longitude}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open in Google Maps
+                </a>
+              </Button>
             </div>
           </div>
 
-          <aside className="space-y-4">
-            <div className="rounded-2xl border bg-card p-5 shadow-sm">
-              <div className="text-xs uppercase tracking-wider text-muted-foreground">User</div>
-              <div className="mt-2 flex items-center gap-3">
-                {alert?.user?.profileImage ? (
-                  <img
-                    src={alert.user.profileImage}
-                    alt={
-                      alert.user?.name
-                        ? `Profile photo of ${alert.user.name}`
-                        : "User profile photo"
-                    }
-                    className="size-12 rounded-full object-cover"
-                  />
-                ) : (
-                  <div className="grid size-12 place-items-center rounded-full gradient-hero font-bold text-white">
-                    {alert?.user?.name?.charAt(0)?.toUpperCase() || "U"}
-                  </div>
-                )}
+          {/* AI Structured Post-Incident Summary (If Resolved) */}
+          {alert.resolutionSummary && (
+            <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/5 p-6 shadow-sm">
+              <div className="flex items-center gap-2 font-bold text-emerald-700 dark:text-emerald-300 mb-3">
+                <Sparkles className="size-5" /> AI Incident Resolution Summary
+              </div>
+              <div className="grid sm:grid-cols-2 gap-4 text-sm">
                 <div>
-                  <div className="font-semibold">{alert?.user?.name}</div>
-                  <div className="text-xs text-muted-foreground">Phone: {alert?.user?.phone}</div>
-                  {alert?.user?.email && (
-                    <div className="text-xs text-muted-foreground">Email: {alert.user.email}</div>
-                  )}
+                  <span className="text-xs text-muted-foreground">Incident Type</span>
+                  <div className="font-semibold">{alert.resolutionSummary.incidentType}</div>
                 </div>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border bg-card p-5 shadow-sm">
-              <div className="text-xs uppercase tracking-wider text-muted-foreground">Emergency details</div>
-              <div className="mt-3 space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Latitude</span>
-                  <span className="font-medium">{alert?.latitude}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Longitude</span>
-                  <span className="font-medium">{alert?.longitude}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Created</span>
-                  <span className="font-medium">{formatDateTime(alert?.createdAt)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Updated</span>
-                  <span className="font-medium">{formatDateTime(alert?.updatedAt)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Status</span>
-                  <span className="font-medium capitalize">{alert?.status}</span>
-                </div>
-                {alert?.acceptedBy?.name && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Accepted Volunteer</span>
-                    <span className="font-medium">{alert.acceptedBy.name}</span>
+                <div>
+                  <span className="text-xs text-muted-foreground">Priority / Risk</span>
+                  <div className="font-semibold text-red-600">
+                    {alert.resolutionSummary.priority} (Initial Risk: {alert.resolutionSummary.initialRisk}/100)
                   </div>
-                )}
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Alert ID</span>
-                  <span className="font-medium">{alert?._id.slice(-6)}</span>
+                </div>
+                <div>
+                  <span className="text-xs text-muted-foreground">Assignment Response Duration</span>
+                  <div className="font-semibold">{alert.resolutionSummary.assignmentDurationSec} seconds</div>
+                </div>
+                <div>
+                  <span className="text-xs text-muted-foreground">Total Response Duration</span>
+                  <div className="font-semibold">
+                    {Math.floor(alert.resolutionSummary.totalResponseDurationSec / 60)}m{" "}
+                    {alert.resolutionSummary.totalResponseDurationSec % 60}s
+                  </div>
+                </div>
+              </div>
+
+              {alert.resolutionSummary.mainFactors && alert.resolutionSummary.mainFactors.length > 0 && (
+                <div className="mt-4">
+                  <span className="text-xs text-muted-foreground font-semibold">Primary Risk Factors:</span>
+                  <ul className="list-disc list-inside text-xs mt-1 space-y-0.5 text-foreground/80">
+                    {alert.resolutionSummary.mainFactors.map((f, i) => (
+                      <li key={i}>{f}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Response Event Timeline */}
+          <div className="rounded-2xl border bg-card p-6 shadow-sm">
+            <h3 className="font-semibold text-base mb-4 flex items-center gap-2">
+              <Clock className="size-4 text-primary" /> Incident Response Timeline
+            </h3>
+            {timeline.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No events recorded yet.</p>
+            ) : (
+              <div className="space-y-4 relative before:absolute before:left-3 before:top-2 before:bottom-2 before:w-0.5 before:bg-border">
+                {timeline.map((evt, idx) => (
+                  <div key={idx} className="relative pl-8 text-sm">
+                    <div className="absolute left-1.5 top-1 size-3.5 rounded-full bg-primary border-2 border-background ring-2 ring-primary/20" />
+                    <div className="flex items-center justify-between flex-wrap">
+                      <span className="font-semibold text-foreground">{evt.event}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(evt.timestamp).toLocaleTimeString()}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5">{evt.description}</p>
+                    {evt.actor && (
+                      <span className="inline-block mt-1 text-[10px] text-primary/80 bg-primary/5 px-2 py-0.5 rounded">
+                        Actor: {evt.actor}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Right Col: Victim & AI Detection Context */}
+        <div className="space-y-6">
+          {/* User Details Card */}
+          <div className="rounded-2xl border bg-card p-6 shadow-sm">
+            <h3 className="font-semibold text-base mb-4 flex items-center gap-2">
+              <UserIcon className="size-4 text-primary" /> User in Distress
+            </h3>
+            <div className="space-y-3 text-sm">
+              <div>
+                <span className="text-xs text-muted-foreground">Full Name</span>
+                <div className="font-semibold">{alert.user?.name || "Anonymous SafeHer User"}</div>
+              </div>
+              <div>
+                <span className="text-xs text-muted-foreground">Emergency Contact Phone</span>
+                <div className="font-semibold text-primary flex items-center gap-1.5 mt-0.5">
+                  <Phone className="size-3.5" />
+                  <a href={`tel:${alert.user?.phone}`}>{alert.user?.phone || "Not provided"}</a>
+                </div>
+              </div>
+              <div>
+                <span className="text-xs text-muted-foreground">Created Timestamp</span>
+                <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                  <Calendar className="size-3.5" /> {new Date(alert.createdAt).toLocaleString()}
                 </div>
               </div>
             </div>
+          </div>
 
-            {alert?.status === "resolved" ? (
-              <div className="rounded-2xl border bg-success/10 p-5 text-center shadow-sm">
-                <div className="inline-flex items-center gap-2 rounded-full bg-success/15 px-4 py-2 text-sm font-semibold text-success">
-                  <CheckCircle2 className="size-4" />
-                  Incident Successfully Resolved
+          {/* AI Intelligence & Priority Insights */}
+          <div className="rounded-2xl border bg-card p-6 shadow-sm">
+            <h3 className="font-semibold text-base mb-3 flex items-center gap-2">
+              <Bot className="size-4 text-purple-500" /> AI Detection Signals
+            </h3>
+            <div className="space-y-2.5 text-xs">
+              <div className="flex justify-between py-1 border-b">
+                <span className="text-muted-foreground">Distress Source:</span>
+                <span className="font-semibold">{alert.source}</span>
+              </div>
+              <div className="flex justify-between py-1 border-b">
+                <span className="text-muted-foreground">Priority Classification:</span>
+                <span className="font-bold text-red-600">{alert.priority || "P1"} ({alert.priorityScore || 85}/100)</span>
+              </div>
+              {alert.distressType && (
+                <div className="flex justify-between py-1 border-b">
+                  <span className="text-muted-foreground">Voice Acoustic Distress:</span>
+                  <span className="font-semibold capitalize text-purple-600">{alert.distressType}</span>
                 </div>
-              </div>
-            ) : alert?.status === "active" ? (
-              <div className="rounded-2xl border bg-card p-5 text-center shadow-sm">
-                <p className="text-sm text-muted-foreground">This alert has not yet been accepted.</p>
-              </div>
-            ) : alert?.status === "accepted" ? (
-              <div className="space-y-2">
-                <Button
-                  onClick={handleResolved}
-                  disabled={resolving}
-                  aria-busy={resolving}
-                  className="w-full bg-success text-white hover:bg-success/90"
-                >
-                  <CheckCircle2 className="mr-2 size-4" />
-                  {resolving ? "Resolving..." : "Mark resolved"}
-                </Button>
-              </div>
-            ) : null}
-          </aside>
-        </div>
-      )}
-    </div>
-  );
-}
+              )}
+              {alert.movementAnomalyType && (
+                <div className="flex justify-between py-1 border-b">
+                  <span className="text-muted-foreground">Movement Anomaly:</span>
+                  <span className="font-semibold capitalize text-blue-600">{alert.movementAnomalyType}</span>
+                </div>
+              )}
+              {alert.routeDeviated && (
+                <div className="flex justify-between py-1 border-b">
+                  <span className="text-muted-foreground">Route Corridor:</span>
+                  <span className="font-semibold text-amber-600">Deviated trajectory</span>
+                </div>
+              )}
+              {alert.detectedKeywords && alert.detectedKeywords.length > 0 && (
+                <div className="py-1">
+                  <span className="text-muted-foreground block mb-1">Verbal Keywords:</span>
+                  <div className="flex flex-wrap gap-1">
+                    {alert.detectedKeywords.map((k, i) => (
+                      <span key={i} className="bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-semibold text-[10px]">
+                        "{k}"
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
 
-function IncidentSkeleton() {
-  return (
-    <div className="grid gap-6 lg:grid-cols-[1fr,360px]">
-      <div className="space-y-4">
-        <div className="h-64 w-full animate-pulse rounded-2xl bg-muted" />
-        <div className="rounded-2xl border bg-card p-6 shadow-sm">
-          <div className="h-4 w-24 animate-pulse rounded bg-muted" />
-          <div className="mt-4 space-y-3">
-            <div className="h-4 w-full animate-pulse rounded bg-muted" />
-            <div className="h-4 w-2/3 animate-pulse rounded bg-muted" />
+            {/* Explainable AI Reasons */}
+            {alert.priorityReasons && alert.priorityReasons.length > 0 && (
+              <div className="mt-4 pt-3 border-t">
+                <span className="text-[11px] font-semibold text-muted-foreground block mb-1">Explainable AI Reasons:</span>
+                <ul className="text-[11px] space-y-1 text-muted-foreground">
+                  {alert.priorityReasons.map((r, i) => (
+                    <li key={i} className="flex items-start gap-1">
+                      <span className="text-red-500 font-bold">•</span> {r}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </div>
       </div>
-      <aside className="space-y-4">
-        <div className="rounded-2xl border bg-card p-5 shadow-sm">
-          <div className="h-3 w-10 animate-pulse rounded bg-muted" />
-          <div className="mt-3 flex items-center gap-3">
-            <div className="size-12 animate-pulse rounded-full bg-muted" />
-            <div className="space-y-2">
-              <div className="h-4 w-24 animate-pulse rounded bg-muted" />
-              <div className="h-3 w-32 animate-pulse rounded bg-muted" />
-            </div>
-          </div>
-        </div>
-        <div className="rounded-2xl border bg-card p-5 shadow-sm">
-          <div className="h-3 w-28 animate-pulse rounded bg-muted" />
-          <div className="mt-3 space-y-2">
-            <div className="h-3 w-full animate-pulse rounded bg-muted" />
-            <div className="h-3 w-full animate-pulse rounded bg-muted" />
-            <div className="h-3 w-2/3 animate-pulse rounded bg-muted" />
-          </div>
-        </div>
-        <div className="h-10 w-full animate-pulse rounded-md bg-muted" />
-      </aside>
     </div>
   );
 }

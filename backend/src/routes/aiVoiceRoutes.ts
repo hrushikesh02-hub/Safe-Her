@@ -7,7 +7,7 @@ import {
 } from "../services/voiceAIService";
 import Alert from "../models/Alert";
 import mongoose from "mongoose";
-import { notifyContactsAndVolunteers } from "../controllers/alertController";
+import { EmergencyDispatchService } from "../services/emergencyDispatchService";
 
 const router = express.Router();
 
@@ -15,7 +15,7 @@ const storage = multer.memoryStorage();
 const upload = multer({
   storage,
   limits: {
-    fileSize: 25 * 1024 * 1024, // 25 MB max
+    fileSize: 50 * 1024 * 1024, // 50 MB max
   },
 });
 
@@ -38,12 +38,13 @@ router.post(
   async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const scenario = req.body?.scenario as string | undefined;
+      const transcription = req.body?.transcription as string | undefined;
       const file = req.file;
 
-      if (!file && !scenario) {
+      if (!file && !scenario && !transcription) {
         res.status(400).json({
           success: false,
-          message: "Either an audio file or demo scenario must be provided.",
+          message: "Either an audio file, transcription, or demo scenario must be provided.",
         });
         return;
       }
@@ -52,7 +53,8 @@ router.post(
         file?.buffer,
         file?.originalname || "recording.wav",
         file?.mimetype || "audio/wav",
-        scenario
+        scenario,
+        transcription
       );
 
       res.status(200).json(result);
@@ -202,19 +204,19 @@ router.post(
 
       console.log(`✅ AI Voice SOS created: ${alert._id}`);
 
-      // Fire-and-forget notifications — do NOT block the response
-      notifyContactsAndVolunteers(
+      // Fire-and-forget Phase 4 Dispatch Engine
+      EmergencyDispatchService.initiateEmergencyDispatch({
+        alertId: (alert._id as mongoose.Types.ObjectId).toString(),
         userId,
-        (alert._id as mongoose.Types.ObjectId).toString(),
-        lat,
-        lng,
-        "AI_VOICE",
-        riskLevel || "CRITICAL",
-        riskScore != null ? Number(riskScore) : 0,
-        distressType || "unknown",
-        Array.isArray(detectedKeywords) ? detectedKeywords : []
-      ).catch((err) =>
-        console.error("AI SOS notification error:", err)
+        latitude: lat,
+        longitude: lng,
+        source: "AI_VOICE",
+        riskLevel: riskLevel || "CRITICAL",
+        riskScore: riskScore != null ? Number(riskScore) : 85,
+        distressType: distressType || "distress_speech",
+        detectedKeywords: Array.isArray(detectedKeywords) ? detectedKeywords : [],
+      }).catch((err) =>
+        console.error("AI SOS dispatch error:", err)
       );
 
       res.status(201).json({

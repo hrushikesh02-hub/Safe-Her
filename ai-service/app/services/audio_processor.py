@@ -33,15 +33,33 @@ class AudioProcessor:
         y = None
         sr = self.target_sr
 
-        if HAS_LIBROSA:
+        # 1. Try standard wave module first for native uncompressed WAV
+        try:
+            import wave
+            with wave.open(io.BytesIO(audio_bytes), "rb") as wf:
+                n_channels = wf.getnchannels()
+                sampwidth = wf.getsampwidth()
+                framerate = wf.getframerate()
+                n_frames = wf.getnframes()
+                raw_data = wf.readframes(n_frames)
+                if sampwidth == 2:
+                    data = np.frombuffer(raw_data, dtype=np.int16).astype(np.float32) / 32768.0
+                    if n_channels > 1:
+                        data = data.reshape(-1, n_channels).mean(axis=1)
+                    y = data
+                    sr = framerate
+        except Exception:
+            pass
+
+        # 2. Try librosa if wave did not parse
+        if y is None and HAS_LIBROSA:
             try:
-                # Load with librosa via BytesIO
                 audio_stream = io.BytesIO(audio_bytes)
                 y, sr = librosa.load(audio_stream, sr=self.target_sr, mono=True)
             except Exception as e:
-                logger.warning(f"librosa.load failed for {filename}: {e}. Attempting raw byte parsing.")
+                logger.warning(f"librosa.load note for {filename}: {e}")
                 y = self._fallback_load(audio_bytes)
-        else:
+        elif y is None:
             y = self._fallback_load(audio_bytes)
 
         if y is None or len(y) == 0:

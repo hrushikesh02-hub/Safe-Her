@@ -10,12 +10,18 @@ EMERGENCY_KEYWORDS = [
     "help",
     "save me",
     "please help",
+    "please help me",
     "help me",
     "bachao",
     "mujhe bachao",
     "sos",
     "danger",
+    "emergency",
+    "in danger",
+    "i am in danger",
+    "call police",
     "stop",
+    "leave me",
     "don't touch me"
 ]
 
@@ -84,23 +90,24 @@ class DistressDetector:
 
     def _classify_from_features(self, features: Dict[str, Any]) -> Tuple[bool, str, float]:
         """
-        Acoustic heuristic classification for prototype:
-        - High spectral centroid (>2800 Hz) + High RMS energy (>0.15) -> Scream
-        - Medium-high centroid (>2000 Hz) + High ZCR (>0.08) -> Shouting
-        - Moderate RMS energy (>0.05) -> Speech
+        Acoustic heuristic classification:
+        - High spectral centroid (>=1800 Hz) + RMS energy (>=0.07) -> Scream
+        - Moderate-high centroid (>=1500 Hz) + high ZCR (>=0.06) -> Shouting
+        - Elevated RMS (>=0.10) -> Distress sound
+        - Moderate RMS energy -> Speech
         - Low energy -> Normal
         """
         rms = features.get("rms_energy", 0.0)
         centroid = features.get("spectral_centroid_hz", 0.0)
         zcr = features.get("zero_crossing_rate", 0.0)
 
-        if centroid >= 2800 and rms >= 0.15:
-            return True, "scream", 0.91
-        elif centroid >= 2000 and (rms >= 0.12 or zcr >= 0.10):
-            return True, "shouting", 0.82
-        elif rms >= 0.20 and zcr >= 0.12:
-            return True, "distress", 0.78
-        elif rms >= 0.04:
+        if (centroid >= 1800 and rms >= 0.07) or (centroid >= 2400 and rms >= 0.04):
+            return True, "scream", 0.92
+        elif (centroid >= 1500 and rms >= 0.06) or (rms >= 0.08 and zcr >= 0.05):
+            return True, "shouting", 0.85
+        elif rms >= 0.10 or (rms >= 0.06 and zcr >= 0.07):
+            return True, "distress", 0.80
+        elif rms >= 0.02:
             return False, "speech", 0.95
         else:
             return False, "normal", 0.98
@@ -117,7 +124,7 @@ class DistressDetector:
 
     def _get_demo_scenario_result(self, scenario: str, audio_features: Dict[str, Any]) -> Dict[str, Any]:
         sc = scenario.lower()
-        if sc == "scream":
+        if sc in ["scream", "scream_attack", "screaming"]:
             return {
                 "success": True,
                 "distress_detected": True,

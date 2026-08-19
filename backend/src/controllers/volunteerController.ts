@@ -3,12 +3,8 @@ import { Types } from "mongoose";
 import { AuthRequest } from "../middleware/authMiddleware";
 import Alert from "../models/Alert";
 import User, { IUser } from "../models/User";
+import { EmergencyDispatchService } from "../services/emergencyDispatchService";
 
-/**
- * Shared helper: verifies the requester is authenticated, exists in the DB,
- * and has the "volunteer" role. Sends the appropriate error response and
- * returns null if any check fails; otherwise returns the volunteer document.
- */
 const requireVolunteer = async (
   req: AuthRequest,
   res: Response,
@@ -60,18 +56,26 @@ export const getDashboard = async (
     const [
       totalAlerts,
       activeAlerts,
+      assignedToMeAlerts,
       acceptedAlerts,
       resolvedAlerts,
       recentAlerts,
     ] = await Promise.all([
       Alert.countDocuments(),
       Alert.countDocuments({ status: "active" }),
+      Alert.countDocuments({ assignedVolunteerId: req.user!.id, status: "active" }),
       Alert.countDocuments({ status: "accepted", acceptedBy: req.user!.id }),
       Alert.countDocuments({ status: "resolved", acceptedBy: req.user!.id }),
-      Alert.find({ acceptedBy: req.user!.id })
+      Alert.find({
+        $or: [
+          { assignedVolunteerId: req.user!.id },
+          { acceptedBy: req.user!.id },
+          { status: "active" },
+        ],
+      })
         .populate("user", "name email phone profileImage")
-        .sort({ updatedAt: -1 })
-        .limit(5),
+        .sort({ createdAt: -1 })
+        .limit(8),
     ]);
 
     res.status(200).json({
@@ -85,10 +89,15 @@ export const getDashboard = async (
           phone: volunteer.phone,
           profileImage: volunteer.profileImage,
           isVerified: volunteer.isVerified,
+          volunteerStatus: volunteer.volunteerStatus || "AVAILABLE",
+          volunteerStats: volunteer.volunteerStats,
+          lastKnownLatitude: volunteer.lastKnownLatitude,
+          lastKnownLongitude: volunteer.lastKnownLongitude,
         },
         statistics: {
           totalAlerts,
           activeAlerts,
+          assignedToMeAlerts,
           acceptedAlerts,
           resolvedAlerts,
         },
@@ -106,12 +115,8 @@ export const getDashboard = async (
 };
 
 /**
- * Get All SOS Alerts
+ * Get All Alerts available to volunteer
  * GET /api/volunteer/alerts
- * Optional Query:
- * ?status=active
- * ?status=accepted
- * ?status=resolved
  */
 export const getAlerts = async (
   req: AuthRequest,
@@ -122,18 +127,15 @@ export const getAlerts = async (
     if (!volunteer) return;
 
     const { status } = req.query;
+    const filter: any = {};
 
-    const filter: { status?: "active" | "accepted" | "resolved" } = {};
-
-    if (
-      status &&
-      ["active", "accepted", "resolved"].includes(status as string)
-    ) {
-      filter.status = status as "active" | "accepted" | "resolved";
+    if (status && ["active", "accepted", "resolved"].includes(status as string)) {
+      filter.status = status;
     }
 
     const alerts = await Alert.find(filter)
       .populate("user", "name email phone profileImage")
+      .populate("assignedVolunteerId", "name email phone profileImage")
       .populate("acceptedBy", "name email phone profileImage")
       .sort({ createdAt: -1 });
 
@@ -154,7 +156,7 @@ export const getAlerts = async (
 };
 
 /**
- * Get Single Alert
+ * Get Single Alert Details
  * GET /api/volunteer/alerts/:id
  */
 export const getAlertById = async (
@@ -163,12 +165,8 @@ export const getAlertById = async (
 ): Promise<void> => {
   try {
     const id = req.params.id as string;
-
     if (!Types.ObjectId.isValid(id)) {
-      res.status(400).json({
-        success: false,
-        message: "Invalid alert ID.",
-      });
+      res.status(400).json({ success: false, message: "Invalid alert ID." });
       return;
     }
 
@@ -177,14 +175,12 @@ export const getAlertById = async (
 
     const alert = await Alert.findById(id)
       .populate("user", "name email phone profileImage isVerified")
+      .populate("assignedVolunteerId", "name email phone profileImage")
       .populate("acceptedBy", "name email phone profileImage")
       .lean();
 
     if (!alert) {
-      res.status(404).json({
-        success: false,
-        message: "Alert not found.",
-      });
+      res.status(404).json({ success: false, message: "Alert not found." });
       return;
     }
 
@@ -204,8 +200,9 @@ export const getAlertById = async (
 };
 
 /**
- * Accept SOS Alert
+ * Accept Alert
  * PUT /api/volunteer/alerts/:id/accept
+ * POST /api/volunteer/alerts/:id/accept
  */
 export const acceptAlert = async (
   req: AuthRequest,
@@ -213,64 +210,63 @@ export const acceptAlert = async (
 ): Promise<void> => {
   try {
     const id = req.params.id as string;
-
-    if (!Types.ObjectId.isValid(id)) {
-      res.status(400).json({
-        success: false,
-        message: "Invalid alert ID.",
-      });
-      return;
-    }
-
-    // Verifies auth + existence + "volunteer" role (previously missing here)
     const volunteer = await requireVolunteer(req, res);
     if (!volunteer) return;
 
-    // Atomically accept the alert only if it's still active
-    const updatedAlert = await Alert.findOneAndUpdate(
-      {
-        _id: id,
-        status: "active",
-      },
-      {
-        $set: {
-          status: "accepted",
-          acceptedBy: req.user!.id,
-        },
-      },
-      {
-        new: true,
-      }
-    )
-      .populate("user", "name email phone profileImage")
-      .populate("acceptedBy", "name email phone profileImage");
-
+    const updatedAlert = await EmergencyDispatchService.handleVolunteerAccept(id, req.user!.id);
     if (!updatedAlert) {
-      res.status(400).json({
-        success: false,
-        message: "This alert has already been accepted or resolved.",
-      });
+      res.status(404).json({ success: false, message: "Alert not found or already handled" });
       return;
     }
 
     res.status(200).json({
       success: true,
-      message: "SOS alert accepted successfully.",
+      message: "SOS alert accepted successfully. Dispatch status: RESPONDING.",
       data: updatedAlert,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Accept Alert Error:", error);
-    res.status(500).json({
+    res.status(400).json({
       success: false,
-      message: "Failed to accept alert.",
-      error: error instanceof Error ? error.message : "Internal Server Error",
+      message: error?.message || "Failed to accept alert.",
     });
   }
 };
 
 /**
- * Resolve SOS Alert
+ * Reject Alert
+ * POST /api/volunteer/alerts/:id/reject
+ */
+export const rejectAlert = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const { reason } = req.body;
+    const volunteer = await requireVolunteer(req, res);
+    if (!volunteer) return;
+
+    const updatedAlert = await EmergencyDispatchService.handleVolunteerReject(id, req.user!.id, reason);
+
+    res.status(200).json({
+      success: true,
+      message: "Alert declined. Reassigned to next candidate.",
+      data: updatedAlert,
+    });
+  } catch (error: any) {
+    console.error("Reject Alert Error:", error);
+    res.status(400).json({
+      success: false,
+      message: error?.message || "Failed to reject alert.",
+    });
+  }
+};
+
+/**
+ * Resolve Alert
  * PUT /api/volunteer/alerts/:id/resolve
+ * POST /api/volunteer/alerts/:id/resolve
  */
 export const resolveAlert = async (
   req: AuthRequest,
@@ -278,176 +274,33 @@ export const resolveAlert = async (
 ): Promise<void> => {
   try {
     const id = req.params.id as string;
-
-    if (!Types.ObjectId.isValid(id)) {
-      res.status(400).json({
-        success: false,
-        message: "Invalid alert ID.",
-      });
-      return;
-    }
-
+    const { notes } = req.body;
     const volunteer = await requireVolunteer(req, res);
     if (!volunteer) return;
 
-    const alert = await Alert.findById(id);
-
-    if (!alert) {
-      res.status(404).json({
-        success: false,
-        message: "Alert not found.",
-      });
+    const updatedAlert = await EmergencyDispatchService.resolveIncident(id, req.user!.id, notes);
+    if (!updatedAlert) {
+      res.status(404).json({ success: false, message: "Alert not found." });
       return;
     }
-
-    if (alert.status === "active") {
-      res.status(400).json({
-        success: false,
-        message: "Accept the alert before resolving it.",
-      });
-      return;
-    }
-
-    if (alert.status === "resolved") {
-      res.status(400).json({
-        success: false,
-        message: "This alert has already been resolved.",
-      });
-      return;
-    }
-
-    if (!alert.acceptedBy || alert.acceptedBy.toString() !== req.user!.id) {
-      res.status(403).json({
-        success: false,
-        message: "Only the assigned volunteer can resolve this alert.",
-      });
-      return;
-    }
-
-    alert.status = "resolved";
-    await alert.save();
-
-    const updatedAlert = await Alert.findById(alert._id)
-      .populate("user", "name email phone profileImage")
-      .populate("acceptedBy", "name email phone profileImage");
 
     res.status(200).json({
       success: true,
-      message: "SOS alert resolved successfully.",
+      message: "SOS alert resolved successfully. Post-incident summary recorded.",
       data: updatedAlert,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Resolve Alert Error:", error);
-    res.status(500).json({
+    res.status(400).json({
       success: false,
-      message: "Failed to resolve alert.",
-      error: error instanceof Error ? error.message : "Internal Server Error",
+      message: error?.message || "Failed to resolve alert.",
     });
   }
 };
 
 /**
- * Get Volunteer Profile
- * GET /api/volunteer/profile
- */
-export const getProfile = async (
-  req: AuthRequest,
-  res: Response
-): Promise<void> => {
-  try {
-    const volunteer = await requireVolunteer(req, res, "-password");
-    if (!volunteer) return;
-
-    res.status(200).json({
-      success: true,
-      message: "Volunteer profile fetched successfully.",
-      data: {
-        id: volunteer._id,
-        name: volunteer.name,
-        email: volunteer.email,
-        phone: volunteer.phone,
-        role: volunteer.role,
-        profileImage: volunteer.profileImage,
-        isVerified: volunteer.isVerified,
-        isBlocked: volunteer.isBlocked,
-        createdAt: volunteer.createdAt,
-        updatedAt: volunteer.updatedAt,
-      },
-    });
-  } catch (error) {
-    console.error("Get Volunteer Profile Error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch volunteer profile.",
-      error: error instanceof Error ? error.message : "Internal Server Error",
-    });
-  }
-};
-
-/**
- * Update Volunteer Profile
- * PUT /api/volunteer/profile
- */
-export const updateProfile = async (
-  req: AuthRequest,
-  res: Response
-): Promise<void> => {
-  try {
-    const volunteer = await requireVolunteer(req, res);
-    if (!volunteer) return;
-
-    const { name, phone } = req.body;
-
-    if (name && name.trim() !== "") {
-      volunteer.name = name.trim();
-    }
-
-    if (phone && phone !== volunteer.phone) {
-      const existingUser = await User.findOne({
-        phone,
-        _id: { $ne: volunteer._id },
-      });
-
-      if (existingUser) {
-        res.status(400).json({
-          success: false,
-          message: "Phone number already exists.",
-        });
-        return;
-      }
-
-      volunteer.phone = phone;
-    }
-
-    if (req.file) {
-      volunteer.profileImage = req.file.path;
-    }
-
-    await volunteer.save();
-
-    const updatedVolunteer = await User.findById(req.user!.id).select(
-      "-password"
-    );
-
-    res.status(200).json({
-      success: true,
-      message: "Profile updated successfully.",
-      data: updatedVolunteer,
-    });
-  } catch (error) {
-    console.error("Update Volunteer Profile Error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to update profile.",
-      error: error instanceof Error ? error.message : "Internal Server Error",
-    });
-  }
-};
-
-/**
- * Update Volunteer Location
+ * Update Volunteer Location & Responder Live Tracking
  * PUT /api/volunteer/location
- * Stores the volunteer's current GPS position for nearby SOS detection
  */
 export const updateVolunteerLocation = async (
   req: AuthRequest,
@@ -457,26 +310,15 @@ export const updateVolunteerLocation = async (
     const volunteer = await requireVolunteer(req, res);
     if (!volunteer) return;
 
-    const { latitude, longitude } = req.body;
+    const { latitude, longitude, alertId } = req.body;
 
     if (latitude == null || longitude == null) {
-      res.status(400).json({
-        success: false,
-        message: "latitude and longitude are required",
-      });
+      res.status(400).json({ success: false, message: "latitude and longitude are required" });
       return;
     }
 
     const lat = parseFloat(latitude);
     const lng = parseFloat(longitude);
-
-    if (isNaN(lat) || isNaN(lng)) {
-      res.status(400).json({
-        success: false,
-        message: "Invalid latitude or longitude values",
-      });
-      return;
-    }
 
     await User.findByIdAndUpdate(req.user!.id, {
       lastKnownLatitude: lat,
@@ -484,19 +326,25 @@ export const updateVolunteerLocation = async (
       lastLocationAt: new Date(),
     });
 
-    console.log(`📍 Volunteer ${volunteer.name} location updated: ${lat}, ${lng}`);
+    let updatedAlert = null;
+    if (alertId && Types.ObjectId.isValid(alertId)) {
+      try {
+        updatedAlert = await EmergencyDispatchService.updateResponderLocation(alertId, req.user!.id, lat, lng);
+      } catch (err: any) {
+        console.warn("Could not update responder live location on alert:", err?.message);
+      }
+    }
 
     res.status(200).json({
       success: true,
       message: "Location updated successfully",
-      data: { latitude: lat, longitude: lng, updatedAt: new Date() },
+      data: { latitude: lat, longitude: lng, alert: updatedAlert },
     });
   } catch (error) {
     console.error("Update Volunteer Location Error:", error);
     res.status(500).json({
       success: false,
       message: "Failed to update location.",
-      error: error instanceof Error ? error.message : "Internal Server Error",
     });
   }
 };
@@ -514,7 +362,7 @@ export const getVolunteerIncidents = async (
     if (!volunteer) return;
 
     const incidents = await Alert.find({
-      acceptedBy: req.user!.id,
+      $or: [{ acceptedBy: req.user!.id }, { assignedVolunteerId: req.user!.id }],
     })
       .populate("user", "name email phone profileImage")
       .populate("acceptedBy", "name email phone profileImage")
@@ -522,12 +370,8 @@ export const getVolunteerIncidents = async (
 
     const statistics = {
       totalIncidents: incidents.length,
-      acceptedIncidents: incidents.filter(
-        (incident) => incident.status === "accepted"
-      ).length,
-      resolvedIncidents: incidents.filter(
-        (incident) => incident.status === "resolved"
-      ).length,
+      acceptedIncidents: incidents.filter((i) => i.status === "accepted").length,
+      resolvedIncidents: incidents.filter((i) => i.status === "resolved").length,
     };
 
     res.status(200).json({
@@ -539,12 +383,50 @@ export const getVolunteerIncidents = async (
     });
   } catch (error) {
     console.error("Get Volunteer Incidents Error:", error);
-
     res.status(500).json({
       success: false,
       message: "Failed to fetch incident history.",
-      error:
-        error instanceof Error ? error.message : "Internal Server Error",
     });
+  }
+};
+
+export const getProfile = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const volunteer = await requireVolunteer(req, res, "-password");
+    if (!volunteer) return;
+
+    res.status(200).json({
+      success: true,
+      message: "Volunteer profile fetched successfully.",
+      data: volunteer,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+export const updateProfile = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const volunteer = await requireVolunteer(req, res);
+    if (!volunteer) return;
+
+    const { name, phone, volunteerStatus } = req.body;
+    if (name) volunteer.name = name.trim();
+    if (phone) volunteer.phone = phone.trim();
+    if (volunteerStatus && ["AVAILABLE", "BUSY", "OFFLINE"].includes(volunteerStatus)) {
+      volunteer.volunteerStatus = volunteerStatus;
+    }
+    if (req.file) volunteer.profileImage = req.file.path;
+
+    await volunteer.save();
+    const updated = await User.findById(req.user!.id).select("-password");
+
+    res.status(200).json({
+      success: true,
+      message: "Profile updated successfully.",
+      data: updated,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 };

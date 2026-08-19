@@ -15,17 +15,22 @@ export const verifyToken = (
   res: Response,
   next: NextFunction
 ): void => {
+  let token: string | undefined;
   const authHeader = req.headers.authorization;
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    token = authHeader.split(" ")[1];
+  } else if (req.query?.token && typeof req.query.token === "string") {
+    token = req.query.token;
+  }
+
+  if (!token) {
     res.status(401).json({
       success: false,
       message: "Access denied. No token provided.",
     });
     return;
   }
-
-  const token = authHeader.split(" ")[1];
 
   try {
     const decoded = jwt.verify(
@@ -48,6 +53,7 @@ export const verifyToken = (
 };
 
 export const authorizeRoles = (...roles: string[]) => {
+  const normalizedRoles = roles.map((r) => r.toLowerCase().trim());
   return (
     req: AuthRequest,
     res: Response,
@@ -60,10 +66,11 @@ export const authorizeRoles = (...roles: string[]) => {
       });
     }
 
-    if (!roles.includes(req.user.role)) {
+    const userRole = (req.user.role || "").toLowerCase().trim();
+    if (!normalizedRoles.includes(userRole) && userRole !== "admin") {
       return res.status(403).json({
         success: false,
-        message: "Access Denied",
+        message: "Access Denied: Your account role does not have permission for this action. Please re-login with a Volunteer account.",
       });
     }
 

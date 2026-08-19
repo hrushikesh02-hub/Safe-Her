@@ -14,12 +14,17 @@ export interface VoiceAnalysisResult {
 export const analyzeVoiceAudio = async (
   audioBlob?: Blob,
   scenario?: string,
-  filename: string = "recording.wav"
+  filename: string = "recording.wav",
+  transcription?: string
 ): Promise<VoiceAnalysisResult> => {
   const formData = new FormData();
 
   if (scenario) {
     formData.append("scenario", scenario);
+  }
+
+  if (transcription) {
+    formData.append("transcription", transcription);
   }
 
   if (audioBlob) {

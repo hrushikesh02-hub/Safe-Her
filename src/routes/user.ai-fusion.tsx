@@ -2,16 +2,27 @@ import { createFileRoute, redirect, Link } from "@tanstack/react-router";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { getRole } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
-  Activity, AlertTriangle, Bot, CheckCircle2, Info, Layers, Loader2,
-  MapPin, Play, RefreshCw, Siren, Sparkles, TrendingUp, X, Zap,
+  ShieldCheck,
+  ShieldAlert,
+  Mic,
+  Activity,
+  Navigation,
+  Sparkles,
+  Siren,
+  Power,
+  RefreshCw,
+  AlertOctagon,
+  ArrowRight,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
-import { analyzeFusion, triggerFusionSOS, type FusionAnalysisResult } from "@/services/fusionAIService";
-import { analyzeMovement } from "@/services/movementAIService";
+import {
+  analyzeFusion,
+  triggerFusionSOS,
+  type FusionAnalysisResult,
+} from "@/services/fusionAIService";
+import { analyzeVoiceAudio } from "@/services/aiVoiceService";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/user/ai-fusion")({
@@ -19,497 +30,768 @@ export const Route = createFileRoute("/user/ai-fusion")({
     if (typeof window === "undefined") return;
     if (getRole() !== "user") throw redirect({ to: "/login" });
   },
-  component: AIFusionDashboard,
+  component: SimpleSafetyShield,
 });
 
-/* ── Constants ─────────────────────────────────────────────────────── */
-const FUSION_SOS_THRESHOLD = 78;
-const CANCEL_COUNTDOWN_SEC = 10;
-const AUTO_ANALYZE_INTERVAL_MS = 8000;
+const CANCEL_COUNTDOWN_SEC = 5;
+const AUTO_EVAL_INTERVAL_MS = 2000;
 
-type EmergencyState = "idle" | "confirming" | "countdown" | "active" | "cancelled";
-
-function AIFusionDashboard() {
-  const [fusionResult, setFusionResult] = useState<FusionAnalysisResult | null>(null);
-  const [voiceScore, setVoiceScore] = useState<number>(0);
-  const [movementScore, setMovementScore] = useState<number>(0);
-  const [gpsScore, setGpsScore] = useState<number>(0);
+function SimpleSafetyShield() {
+  const [isMonitoring, setIsMonitoring] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
-  const [isMonitoring, setIsMonitoring] = useState(false);
-  const [history, setHistory] = useState<Array<{ time: string; result: FusionAnalysisResult }>>([]);
+  const [fusionResult, setFusionResult] = useState<FusionAnalysisResult | null>(null);
 
+  // Subsystem health states
+  const [voiceAvailable, setVoiceAvailable] = useState(true);
+  const [motionAvailable, setMotionAvailable] = useState(true);
+  const [locationAvailable, setLocationAvailable] = useState(true);
+  const [predictionAvailable, setPredictionAvailable] = useState(true);
+
+  // Live Sensor Risk Trackers
+  const liveVoiceRiskRef = useRef<number>(14);
+  const liveMotionRiskRef = useRef<number>(12);
+  const liveGpsRiskRef = useRef<number>(15);
+
+  // GPS Coordinates
   const [gpsLocation, setGpsLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [currentSpeed, setCurrentSpeed] = useState(0);
   const gpsWatchRef = useRef<number | null>(null);
 
-  const [emergencyState, setEmergencyState] = useState<EmergencyState>("idle");
-  const [cancelCountdown, setCancelCountdown] = useState(CANCEL_COUNTDOWN_SEC);
-  const [activeIncident, setActiveIncident] = useState<any | null>(null);
-  const [sosTriggerInProgress, setSosTriggerInProgress] = useState(false);
-  const criticalCountRef = useRef(0);
-  const cancelTimerRef = useRef<any>(null);
-  const intervalRef = useRef<any>(null);
+  // Audio / Speech Recognition Refs
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const speechRecognitionRef = useRef<any>(null);
+  const currentTranscriptRef = useRef<string>("");
+  const [liveTranscript, setLiveTranscript] = useState<string>("");
+  const [speechActive, setSpeechActive] = useState(false);
 
-  /* GPS */
+  // Emergency / Distress State
+  const [isDistressDetected, setIsDistressDetected] = useState(false);
+  const [isEmergencyActive, setIsEmergencyActive] = useState(false);
+  const [cancelCountdown, setCancelCountdown] = useState(CANCEL_COUNTDOWN_SEC);
+  const countdownTimerRef = useRef<any>(null);
+  const autoEvalTimerRef = useRef<any>(null);
+
+  /* 1. Track Real Geolocation & Time-based Context */
   useEffect(() => {
-    if (!navigator.geolocation) return;
+    if (!navigator.geolocation) {
+      setLocationAvailable(false);
+      return;
+    }
+
+    // Evaluate time-based context risk (night hours 22:00 - 05:00 have higher base risk)
+    const hour = new Date().getHours();
+    const isNight = hour >= 22 || hour < 5;
+    liveGpsRiskRef.current = isNight ? 28 : 14;
+
     gpsWatchRef.current = navigator.geolocation.watchPosition(
       (pos) => {
-        setGpsLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setCurrentSpeed(((pos.coords.speed ?? 0) * 3.6));
+        setLocationAvailable(true);
+        setGpsLocation({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+        });
+        // Speed context if moving fast
+        if (pos.coords.speed && pos.coords.speed > 5) {
+          liveGpsRiskRef.current = Math.min(45, (liveGpsRiskRef.current || 15) + 10);
+        }
       },
-      () => {},
-      { enableHighAccuracy: true, maximumAge: 4000 }
+      () => {
+        setLocationAvailable(false);
+      },
+      { enableHighAccuracy: true, maximumAge: 5000 }
     );
-    return () => { if (gpsWatchRef.current != null) navigator.geolocation.clearWatch(gpsWatchRef.current); };
+
+    return () => {
+      if (gpsWatchRef.current != null) {
+        navigator.geolocation.clearWatch(gpsWatchRef.current);
+      }
+    };
   }, []);
 
-  /* Countdown */
+  /* 2. Track Live Device Motion / Accelerometer */
   useEffect(() => {
-    if (emergencyState !== "countdown") return;
-    setCancelCountdown(CANCEL_COUNTDOWN_SEC);
-    cancelTimerRef.current = setInterval(() => {
+    const handleMotion = (event: DeviceMotionEvent) => {
+      setMotionAvailable(true);
+      const acc = event.accelerationIncludingGravity;
+      if (!acc) return;
+      const x = acc.x || 0;
+      const y = acc.y || 0;
+      const z = acc.z || 9.8;
+      const mag = Math.sqrt(x * x + y * y + z * z);
+      const delta = Math.abs(mag - 9.8); // Deviation from gravity
+
+      if (delta > 15) {
+        // Sudden violent shake / impact / fall
+        liveMotionRiskRef.current = 85;
+      } else if (delta > 8) {
+        // Fast running / heavy movement
+        liveMotionRiskRef.current = 45;
+      } else if (delta > 2) {
+        // Normal walking / hand movement
+        liveMotionRiskRef.current = 22;
+      } else {
+        // Stationary
+        liveMotionRiskRef.current = 12;
+      }
+    };
+
+    if (typeof window !== "undefined" && "DeviceMotionEvent" in window) {
+      window.addEventListener("devicemotion", handleMotion);
+    }
+
+    return () => {
+      if (typeof window !== "undefined" && "DeviceMotionEvent" in window) {
+        window.removeEventListener("devicemotion", handleMotion);
+      }
+    };
+  }, []);
+
+  /* 3. Start Live Microphone, AnalyserNode Volume & Speech Recognition */
+  const startLiveVoiceGuard = useCallback(async () => {
+    // If already active, don't restart
+    if (audioStreamRef.current && audioStreamRef.current.active) return;
+
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setVoiceAvailable(false);
+        return;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      audioStreamRef.current = stream;
+      setVoiceAvailable(true);
+
+      // Setup Web Audio Analyser for Real-time Sound Intensity Tracking
+      try {
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        audioContextRef.current = audioCtx;
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+        analyserRef.current = analyser;
+
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const checkLiveVolume = () => {
+          if (!audioStreamRef.current || !audioStreamRef.current.active) return;
+          analyser.getByteFrequencyData(dataArray);
+
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i];
+          }
+          const avgVolume = sum / dataArray.length;
+
+          if (avgVolume > 110) {
+            // Loud scream / shout spike
+            liveVoiceRiskRef.current = 95;
+            triggerImmediateDistress("scream", 95);
+          } else if (avgVolume > 60) {
+            // Talking / Loud ambient sound
+            liveVoiceRiskRef.current = Math.min(65, Math.round(20 + (avgVolume - 60) * 0.8));
+          } else if (avgVolume > 20) {
+            // Low murmur / room noise
+            liveVoiceRiskRef.current = Math.min(30, Math.round(12 + avgVolume * 0.3));
+          } else {
+            // Quiet
+            liveVoiceRiskRef.current = 14;
+          }
+
+          requestAnimationFrame(checkLiveVolume);
+        };
+        requestAnimationFrame(checkLiveVolume);
+      } catch (audioErr) {
+        console.warn("AudioContext init notice:", audioErr);
+      }
+
+      // Start Web Speech Recognition
+      const SpeechRecognition =
+        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+      if (SpeechRecognition) {
+        try {
+          const recognition = new SpeechRecognition();
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          recognition.lang = "en-US";
+
+          recognition.onresult = async (event: any) => {
+            let transcript = "";
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+              transcript += event.results[i][0].transcript;
+            }
+
+            if (transcript.trim()) {
+              currentTranscriptRef.current = transcript.trim();
+              setLiveTranscript(transcript.trim());
+              console.log("🎤 Speech heard:", transcript.trim());
+              const lower = transcript.toLowerCase();
+              const emergencyWords = [
+                "help",
+                "help me",
+                "save me",
+                "please help",
+                "please help me",
+                "bachao",
+                "mujhe bachao",
+                "emergency",
+                "danger",
+                "in danger",
+                "call police",
+                "sos",
+                "stop",
+                "leave me",
+                "don't touch me",
+              ];
+
+              const matched = emergencyWords.some((w) => lower.includes(w));
+              if (matched) {
+                console.log("🚨 DISTRESS KEYWORD MATCHED:", transcript);
+                toast.warning(`🎤 Heard: "${transcript.trim()}" — Triggering distress!`, { duration: 3000 });
+                liveVoiceRiskRef.current = 98;
+                triggerImmediateDistress("distress_keyword", 98);
+              }
+            }
+          };
+
+          recognition.onerror = (e: any) => {
+            console.warn("SpeechRecognition error:", e?.error);
+            if (e?.error === 'not-allowed') {
+              toast.error("Microphone access denied. Please allow mic access.");
+            }
+          };
+
+          recognition.onstart = () => {
+            console.log("🎤 Speech recognition STARTED");
+            setSpeechActive(true);
+          };
+
+          recognition.onend = () => {
+            console.log("🎤 Speech recognition ENDED, restarting...");
+            setSpeechActive(false);
+            if (audioStreamRef.current && audioStreamRef.current.active) {
+              try {
+                recognition.start();
+              } catch (_) {}
+            }
+          };
+
+          recognition.start();
+          speechRecognitionRef.current = recognition;
+        } catch (speechErr) {
+          console.warn("SpeechRecognition init error:", speechErr);
+        }
+      }
+    } catch (err) {
+      console.warn("Microphone access notice:", err);
+      setVoiceAvailable(false);
+    }
+  }, []);
+
+  const stopLiveVoiceGuard = useCallback(() => {
+    if (audioContextRef.current) {
+      try {
+        audioContextRef.current.close();
+      } catch (_) {}
+      audioContextRef.current = null;
+    }
+    if (speechRecognitionRef.current) {
+      try {
+        speechRecognitionRef.current.stop();
+      } catch (_) {}
+      speechRecognitionRef.current = null;
+    }
+    if (audioStreamRef.current) {
+      audioStreamRef.current.getTracks().forEach((t) => t.stop());
+      audioStreamRef.current = null;
+    }
+  }, []);
+
+  /* Helper to immediately trigger distress */
+  const triggerImmediateDistress = useCallback((reason: string, score: number) => {
+    setIsDistressDetected(true);
+    setFusionResult((prev) => ({
+      success: true,
+      final_risk_score: score,
+      final_risk_level: "CRITICAL",
+      recommendation: "CRITICAL_SOS",
+      component_scores: {
+        voice_risk_score: score,
+        movement_risk_score: liveMotionRiskRef.current,
+        gps_context_score: liveGpsRiskRef.current,
+      },
+      risk_breakdown: {
+        voice_contribution: 50,
+        movement_contribution: 25,
+        gps_contribution: 25,
+        weights_used: { voice: 0.5, movement: 0.3, gps: 0.2 },
+      },
+    }));
+  }, []);
+
+  /* 4. Real Multi-Modal AI Risk Evaluation */
+  const runEvaluation = useCallback(
+    async (scenarioOverride?: string, voiceRiskOverride?: number) => {
+      setAnalyzing(true);
+
+      try {
+        const vRisk = voiceRiskOverride ?? liveVoiceRiskRef.current;
+        const mRisk = liveMotionRiskRef.current;
+        const gRisk = liveGpsRiskRef.current;
+
+        const res = await analyzeFusion({
+          voice_risk_score: vRisk,
+          movement_risk_score: mRisk,
+          gps_context_score: gRisk,
+          scenario: scenarioOverride,
+        });
+
+        // API returns { success, data: FusionAnalysisResult, should_trigger_sos }
+        const fusionData = res.data || res;
+        setFusionResult(fusionData);
+        setMotionAvailable(true);
+        setPredictionAvailable(true);
+
+        const voiceAloneCritical = vRisk >= 75;
+
+        const isCritical =
+          voiceAloneCritical ||
+          fusionData.final_risk_score >= 78 ||
+          fusionData.final_risk_level === "CRITICAL" ||
+          fusionData.recommendation === "CRITICAL_SOS" ||
+          res.should_trigger_sos === true;
+
+        if (isCritical) {
+          setIsDistressDetected(true);
+        } else {
+          setIsDistressDetected(false);
+        }
+      } catch (err: any) {
+        console.error("[SafetyShield] Backend analysis error:", err);
+        setPredictionAvailable(false);
+      } finally {
+        setAnalyzing(false);
+      }
+    },
+    []
+  );
+
+  const executeAutoSOSRef = useRef<() => Promise<void>>(async () => {});
+
+  /* 4. Trigger Automatic SOS when Critical */
+  const executeAutoSOS = useCallback(async () => {
+    try {
+      const lat = gpsLocation?.lat || 19.8911;
+      const lng = gpsLocation?.lng || 74.4819;
+
+      toast.loading("🚨 Dispatching Emergency SOS to contacts & nearby volunteers...", { id: "fusion-sos" });
+
+      await triggerFusionSOS({
+        latitude: lat,
+        longitude: lng,
+        finalRiskScore: fusionResult?.final_risk_score || 95,
+        finalRiskLevel: fusionResult?.final_risk_level || "CRITICAL",
+        riskScore: fusionResult?.component_scores?.voice_risk_score || 95,
+        movementRiskScore: fusionResult?.component_scores?.movement_risk_score || 80,
+        gpsContextScore: fusionResult?.component_scores?.gps_context_score || 75,
+        fusionSource: "AI_SAFETY_SHIELD",
+      });
+
+      toast.dismiss("fusion-sos");
+      setIsEmergencyActive(true);
+      setIsDistressDetected(false);
+      toast.error("🚨 Automatic SOS Triggered! Emergency network & volunteers alerted.", { duration: 8000 });
+    } catch (err: any) {
+      toast.dismiss("fusion-sos");
+      console.error("[AutoSOS] Failed:", err);
+      toast.error(err?.message || "Emergency dispatch communication error");
+    }
+  }, [gpsLocation, fusionResult]);
+
+  useEffect(() => {
+    executeAutoSOSRef.current = executeAutoSOS;
+  }, [executeAutoSOS]);
+
+  /* 5. Manage Monitoring Lifecycle (Pause polling when distress is detected) */
+  useEffect(() => {
+    if (isMonitoring && !isEmergencyActive && !isDistressDetected) {
+      startLiveVoiceGuard();
+      runEvaluation();
+      autoEvalTimerRef.current = setInterval(() => runEvaluation(), AUTO_EVAL_INTERVAL_MS);
+    } else {
+      if (autoEvalTimerRef.current) {
+        clearInterval(autoEvalTimerRef.current);
+        autoEvalTimerRef.current = null;
+      }
+    }
+
+    return () => {
+      if (autoEvalTimerRef.current) {
+        clearInterval(autoEvalTimerRef.current);
+        autoEvalTimerRef.current = null;
+      }
+    };
+  }, [isMonitoring, isEmergencyActive, isDistressDetected]);
+
+  /* 6. Countdown Guard on Distress Detection (Solid, non-resetting ticker) */
+  useEffect(() => {
+    if (!isDistressDetected || isEmergencyActive) return;
+
+    console.log("🔴 DISTRESS DETECTED — Starting 3s countdown to auto-SOS");
+    toast.error("🔴 DISTRESS DETECTED — SOS in 3 seconds!", { duration: 3000, id: "distress-countdown" });
+    setCancelCountdown(3);
+
+    const timer = setInterval(() => {
       setCancelCountdown((prev) => {
-        if (prev <= 1) { clearInterval(cancelTimerRef.current); fireSOS(); return 0; }
+        if (prev <= 1) {
+          clearInterval(timer);
+          executeAutoSOSRef.current();
+          return 0;
+        }
         return prev - 1;
       });
     }, 1000);
-    return () => { if (cancelTimerRef.current) clearInterval(cancelTimerRef.current); };
-  }, [emergencyState]);
 
-  useEffect(() => () => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    if (cancelTimerRef.current) clearInterval(cancelTimerRef.current);
-  }, []);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [isDistressDetected, isEmergencyActive]);
 
-  /* SOS */
-  const fireSOS = useCallback(async () => {
-    if (sosTriggerInProgress || emergencyState === "active") return;
-    setSosTriggerInProgress(true);
-    try {
-      if (!gpsLocation) { toast.error("GPS unavailable."); setEmergencyState("idle"); return; }
-      const res = await triggerFusionSOS({
-        latitude: gpsLocation.lat,
-        longitude: gpsLocation.lng,
-        finalRiskScore: fusionResult?.final_risk_score,
-        finalRiskLevel: fusionResult?.final_risk_level,
-        riskScore: fusionResult?.component_scores.voice_risk_score,
-        movementRiskScore: fusionResult?.component_scores.movement_risk_score,
-        gpsContextScore: fusionResult?.component_scores.gps_context_score,
-        fusionSource: "VOICE+MOVEMENT+GPS",
-      });
-      setActiveIncident(res.data);
-      setEmergencyState("active");
-      criticalCountRef.current = 0;
-      toast.error("🚨 FUSION SOS CREATED — All Contacts & Volunteers Notified!", { duration: 8000 });
-    } catch (err: any) {
-      toast.error(err?.response?.data?.message || "SOS failed. Use manual SOS immediately.");
-      setEmergencyState("idle");
-    } finally {
-      setSosTriggerInProgress(false);
-    }
-  }, [gpsLocation, fusionResult, sosTriggerInProgress, emergencyState]);
-
-  /* Evaluate */
-  const evaluateFusion = useCallback((result: FusionAnalysisResult) => {
-    if (result.final_risk_score >= FUSION_SOS_THRESHOLD && emergencyState === "idle") {
-      criticalCountRef.current = 1;
-      setEmergencyState("confirming");
-      toast.warning("⚠️ High unified risk score — monitoring...", { duration: 4000 });
-    } else if (result.final_risk_score >= FUSION_SOS_THRESHOLD && emergencyState === "confirming") {
-      criticalCountRef.current += 1;
-      if (criticalCountRef.current >= 2) setEmergencyState("countdown");
-    }
-  }, [emergencyState]);
-
-  /* Analyze */
-  const runFusionAnalysis = useCallback(async (overrides?: {
-    voice?: number; movement?: number; gps?: number; scenario?: string;
-  }) => {
-    setAnalyzing(true);
-    try {
-      let finalVoice = overrides?.voice ?? voiceScore;
-      let finalMovement = overrides?.movement ?? movementScore;
-      let finalGps = overrides?.gps ?? gpsScore;
-
-      // If monitoring is on, try to auto-fetch a fresh movement sample
-      if (isMonitoring && !overrides?.scenario) {
-        try {
-          const mv = await analyzeMovement({
-            speed_kmh: currentSpeed,
-            latitude: gpsLocation?.lat,
-            longitude: gpsLocation?.lng,
-          });
-          finalMovement = mv.movement.movement_risk_score;
-          finalGps = mv.gps_context?.gps_context_score ?? finalGps;
-        } catch {}
-      }
-
-      const res = await analyzeFusion({
-        voice_risk_score: finalVoice,
-        movement_risk_score: finalMovement,
-        gps_context_score: finalGps,
-        scenario: overrides?.scenario,
-      });
-
-      setFusionResult(res.data);
-      setVoiceScore(res.data.component_scores.voice_risk_score);
-      setMovementScore(res.data.component_scores.movement_risk_score);
-      setGpsScore(res.data.component_scores.gps_context_score);
-      setHistory(prev => [{ time: new Date().toLocaleTimeString(), result: res.data }, ...prev.slice(0, 9)]);
-      evaluateFusion(res.data);
-    } catch {
-      toast.error("Fusion analysis error.");
-    } finally {
-      setAnalyzing(false);
-    }
-  }, [voiceScore, movementScore, gpsScore, gpsLocation, currentSpeed, isMonitoring, evaluateFusion]);
-
-  const startMonitoring = () => {
-    setIsMonitoring(true);
-    runFusionAnalysis();
-    intervalRef.current = setInterval(runFusionAnalysis, AUTO_ANALYZE_INTERVAL_MS);
-    toast.success("🔁 Unified Risk Engine activated.");
+  const handleCancelEmergency = () => {
+    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+    setIsDistressDetected(false);
+    setIsEmergencyActive(false);
+    runEvaluation("safe");
+    toast.success("Emergency check cancelled.");
   };
 
-  const stopMonitoring = () => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    setIsMonitoring(false);
-  };
+  // Determine overall safety state
+  const riskScore = fusionResult?.final_risk_score ?? 15;
+  const isSafe = riskScore < 50 && !isDistressDetected && !isEmergencyActive;
+  const isElevated = riskScore >= 50 && riskScore < 78 && !isEmergencyActive;
 
-  const cancelEmergency = () => {
-    if (cancelTimerRef.current) clearInterval(cancelTimerRef.current);
-    criticalCountRef.current = 0;
-    setEmergencyState("cancelled");
-    setTimeout(() => setEmergencyState("idle"), 2500);
-    toast.success("Emergency cancelled.");
-  };
-
-  /* Color helpers */
-  const riskColor = (level: string | undefined) =>
-    level === "CRITICAL" ? "bg-destructive text-destructive-foreground"
-    : level === "HIGH" ? "bg-amber-600 text-white"
-    : level === "MEDIUM" ? "bg-yellow-500 text-slate-900"
-    : "bg-emerald-600 text-white";
-
-  const recColor = (rec: string | undefined) => ({
-    SAFE: "text-emerald-600", MONITOR: "text-yellow-600",
-    ALERT: "text-amber-600", CRITICAL_SOS: "text-destructive",
-  }[rec ?? "SAFE"] ?? "text-muted-foreground");
-
-  const scoreBar = (score: number, label: string, icon: React.ReactNode, weight: string) => (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between text-sm">
-        <div className="flex items-center gap-2">
-          {icon}
-          <span className="font-medium">{label}</span>
-          <span className="text-xs text-muted-foreground">({weight})</span>
-        </div>
-        <span className="font-bold">{score}<span className="text-xs font-normal text-muted-foreground">/100</span></span>
-      </div>
-      <Progress value={score} className="h-2.5" />
-    </div>
-  );
-
-  /* ── Render ────────────────────────────────────────────────────────── */
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
+    <div className="max-w-xl mx-auto space-y-6 pb-12">
+      {/* ── HEADER ────────────────────────────────────────────── */}
+      <div className="text-center space-y-1">
+        <h1 className="text-2xl font-black tracking-tight text-foreground flex items-center justify-center gap-2">
+          <Sparkles className="size-6 text-primary" /> SAFETY SHIELD AI
+        </h1>
+        <p className="text-xs text-muted-foreground">
+          Continuous multi-sensor background intelligence
+        </p>
+      </div>
 
-      {/* Emergency overlay */}
-      {emergencyState !== "idle" && (
-        <div className={`rounded-3xl border-2 p-6 md:p-8 shadow-lg ${
-          emergencyState === "active" ? "border-red-600 bg-red-600/10"
-          : emergencyState === "countdown" ? "border-red-500 bg-red-500/10 animate-pulse"
-          : emergencyState === "confirming" ? "border-amber-500 bg-amber-500/10"
-          : "border-emerald-500 bg-emerald-500/10"
-        }`}>
-          {emergencyState === "confirming" && (
-            <div className="flex items-start gap-4 justify-between flex-wrap">
-              <div className="flex items-center gap-3">
-                <AlertTriangle className="size-8 text-amber-500 shrink-0" />
-                <div>
-                  <div className="font-bold text-amber-700 dark:text-amber-400 text-lg">⚠️ High Unified Risk Score</div>
-                  <p className="text-sm text-amber-600 dark:text-amber-300 mt-1">Score: {fusionResult?.final_risk_score}/100 · Watching for confirmation...</p>
-                </div>
-              </div>
-              <Button variant="outline" size="sm" onClick={() => { criticalCountRef.current = 0; setEmergencyState("idle"); }}>
-                <X className="mr-1 size-4" /> Dismiss
-              </Button>
+      {/* ── EMERGENCY ACTIVE BANNER ──────────────────────────── */}
+      {isEmergencyActive ? (
+        <div className="rounded-3xl bg-red-600 text-white p-6 shadow-2xl space-y-4 animate-pulse text-center">
+          <div className="size-16 rounded-full bg-white/20 grid place-items-center mx-auto">
+            <Siren className="size-10 text-white" />
+          </div>
+          <div>
+            <div className="text-xs font-black uppercase tracking-widest bg-white/20 inline-block px-3 py-1 rounded-full">
+              🚨 EMERGENCY ACTIVE
             </div>
-          )}
-          {emergencyState === "countdown" && (
-            <div className="flex items-start gap-4 justify-between flex-wrap">
-              <div className="flex items-center gap-3">
-                <Siren className="size-10 text-red-600 animate-bounce shrink-0" />
-                <div>
-                  <div className="font-bold text-red-700 dark:text-red-400 text-xl">🚨 CRITICAL RISK CONFIRMED</div>
-                  <div className="text-sm text-red-600 dark:text-red-300 mt-1">Unified Score: <strong>{fusionResult?.final_risk_score}/100</strong> · {fusionResult?.recommendation}</div>
-                  <div className="mt-2 text-sm font-semibold text-red-700 dark:text-red-300">
-                    Auto SOS in <span className="text-3xl font-black">{cancelCountdown}</span>s
-                  </div>
-                </div>
-              </div>
-              <div className="flex flex-col gap-2">
-                <Button variant="destructive" size="lg" onClick={cancelEmergency}>
-                  <X className="mr-2 size-4" /> Cancel Emergency
-                </Button>
-                <Button size="sm" className="bg-red-700 text-white hover:bg-red-800"
-                  onClick={() => { if (cancelTimerRef.current) clearInterval(cancelTimerRef.current); fireSOS(); }}
-                  disabled={sosTriggerInProgress}>
-                  {sosTriggerInProgress ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Siren className="mr-2 size-4" />}
-                  Trigger Now
-                </Button>
-              </div>
+            <h2 className="text-2xl font-black mt-2">Automatic SOS Has Been Triggered</h2>
+            <p className="text-xs text-red-100 mt-1 max-w-sm mx-auto">
+              SafeHer has escalated this incident to nearby responders and your emergency network.
+            </p>
+          </div>
+          <Button asChild size="lg" className="w-full bg-white text-red-600 hover:bg-red-50 font-black h-12 rounded-2xl shadow">
+            <Link to="/user/sos">
+              <Siren className="mr-2 size-5" /> VIEW EMERGENCY
+            </Link>
+          </Button>
+        </div>
+      ) : isDistressDetected ? (
+        /* ── DISTRESS DETECTED (COUNTDOWN) ─────────────────── */
+        <div className="rounded-3xl bg-rose-600 text-white p-6 shadow-2xl space-y-4 text-center">
+          <div className="size-16 rounded-full bg-white/20 grid place-items-center mx-auto animate-bounce">
+            <AlertOctagon className="size-10 text-white" />
+          </div>
+          <div>
+            <div className="text-xs font-black uppercase tracking-widest bg-white/20 inline-block px-3 py-1 rounded-full">
+              🔴 DISTRESS DETECTED
             </div>
-          )}
-          {emergencyState === "active" && activeIncident && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-3">
-                <Siren className="size-10 text-red-600" />
-                <div>
-                  <div className="font-bold text-red-700 dark:text-red-400 text-xl">🚨 FUSION SOS ACTIVE</div>
-                  <p className="text-sm text-red-500 mt-1">Emergency contacts and nearby volunteers notified via email.</p>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-                {[
-                  ["ID", activeIncident._id?.slice(-8).toUpperCase()],
-                  ["Source", "FUSION"],
-                  ["Final Score", `${activeIncident.finalRiskScore ?? "?"}/100`],
-                  ["Status", activeIncident.status],
-                ].map(([l, v]) => (
-                  <div key={l} className="rounded-xl border border-red-300 bg-white/40 dark:bg-black/20 p-3">
-                    <div className="text-xs text-muted-foreground">{l}</div>
-                    <div className="font-bold text-xs mt-1 capitalize">{v}</div>
-                  </div>
-                ))}
-              </div>
+            <h2 className="text-2xl font-black mt-2">SafeHer Detected a Possible Emergency</h2>
+            <p className="text-xs text-rose-100 mt-1">
+              Checking your safety... Automatic SOS in{" "}
+              <span className="font-extrabold text-lg underline">{cancelCountdown}s</span>
+            </p>
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <Button
+              onClick={handleCancelEmergency}
+              variant="outline"
+              size="lg"
+              className="flex-1 bg-white/10 hover:bg-white/20 text-white border-white/30 font-bold rounded-2xl h-12"
+            >
+              I'M OK · CANCEL
+            </Button>
+            <Button
+              onClick={executeAutoSOS}
+              size="lg"
+              className="flex-1 bg-white text-rose-600 hover:bg-rose-50 font-black rounded-2xl h-12 shadow"
+            >
+              DISPATCH NOW
+            </Button>
+          </div>
+        </div>
+      ) : isMonitoring ? (
+        /* ── MAIN ACTIVE SHIELD CARD ────────────────────────── */
+        <div
+          className={`rounded-3xl p-6 md:p-8 text-white shadow-xl space-y-6 text-center transition-all ${
+            isSafe
+              ? "bg-gradient-to-br from-emerald-600 to-teal-700"
+              : "bg-gradient-to-br from-amber-600 to-orange-700"
+          }`}
+        >
+          <div className="size-20 rounded-full bg-white/20 grid place-items-center mx-auto shadow-inner">
+            {isSafe ? (
+              <ShieldCheck className="size-12 text-emerald-200" />
+            ) : (
+              <ShieldAlert className="size-12 text-amber-200" />
+            )}
+          </div>
+
+          <div>
+            <div className="text-xs font-black tracking-widest uppercase bg-white/20 inline-block px-3 py-1 rounded-full">
+              {isSafe ? "🟢 SAFE" : "🟡 SAFETY ALERT"}
             </div>
-          )}
-          {emergencyState === "cancelled" && (
-            <div className="flex items-center gap-3">
-              <CheckCircle2 className="size-8 text-emerald-500" />
-              <div className="font-semibold text-emerald-700 dark:text-emerald-400">Emergency cancelled. Monitoring continues.</div>
+            <h2 className="text-2xl font-black mt-2">
+              {isSafe ? "Your Safety Monitoring is Active" : "Unusual Activity Detected"}
+            </h2>
+            <p className="text-xs text-white/80 mt-1">
+              {isSafe
+                ? "All AI protection channels are continuously safeguarding you."
+                : "Elevated risk observed. Keep your phone accessible."}
+            </p>
+          </div>
+
+          {/* Real Safety Score Display */}
+          <div className="bg-black/20 backdrop-blur rounded-2xl p-4 max-w-xs mx-auto space-y-1">
+            <div className="text-[11px] font-bold text-white/80 uppercase tracking-wider">
+              AI Risk Index
             </div>
-          )}
+            <div className="text-3xl font-black tracking-tight">{riskScore} / 100</div>
+            <div className="text-[10px] font-extrabold tracking-widest uppercase text-white/90">
+              {fusionResult?.final_risk_level || (isSafe ? "LOW RISK" : "ELEVATED")}
+            </div>
+          </div>
+
+          {/* Toggle Button */}
+          <Button
+            onClick={() => setIsMonitoring(false)}
+            size="lg"
+            variant="outline"
+            className="bg-white/10 hover:bg-white/20 text-white border-white/40 font-black rounded-2xl h-11 w-full max-w-xs mx-auto flex items-center justify-center gap-2"
+          >
+            <Power className="size-4" /> STOP MONITORING
+          </Button>
+        </div>
+      ) : (
+        /* ── MONITORING OFF STATE ───────────────────────────── */
+        <div className="rounded-3xl border bg-card p-8 shadow-sm space-y-6 text-center">
+          <div className="size-20 rounded-full bg-muted grid place-items-center mx-auto">
+            <ShieldAlert className="size-12 text-muted-foreground" />
+          </div>
+
+          <div>
+            <div className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+              ⚪ MONITORING OFF
+            </div>
+            <h2 className="text-xl font-bold text-foreground mt-1">Safety Shield is Inactive</h2>
+            <p className="text-xs text-muted-foreground mt-1 max-w-xs mx-auto">
+              Enable monitoring for automatic distress, motion anomaly, and emergency detection.
+            </p>
+          </div>
+
+          <Button
+            onClick={() => setIsMonitoring(true)}
+            size="lg"
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-2xl h-12 w-full max-w-xs shadow"
+          >
+            <Power className="size-5 mr-2" /> START MONITORING
+          </Button>
         </div>
       )}
 
-      {/* Hero */}
-      <div className="rounded-3xl gradient-hero p-6 text-white shadow-elegant md:p-8">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-white/80">
-              <Sparkles className="size-4 text-yellow-300" />
-              SafeHer AI · Phase 2 · Unified Risk Engine
-            </div>
-            <h1 className="mt-1 text-2xl font-bold md:text-3xl">Multi-Modal Safety Dashboard</h1>
-            <p className="mt-2 max-w-2xl text-sm text-white/80">
-              Voice + Movement + GPS context scores fused into a single real-time risk assessment. SOS triggered automatically when unified score ≥ {FUSION_SOS_THRESHOLD}.
-            </p>
-            {gpsLocation && (
-              <div className="mt-2 text-xs text-white/60">
-                <MapPin className="inline size-3 mr-1" />
-                {gpsLocation.lat.toFixed(4)}, {gpsLocation.lng.toFixed(4)} · {currentSpeed.toFixed(1)} km/h
-              </div>
-            )}
-          </div>
-          <div className="flex flex-col gap-2">
-            {!isMonitoring ? (
-              <Button onClick={startMonitoring} size="lg" className="bg-white text-slate-900 hover:bg-white/90 font-semibold shadow-lg">
-                <Activity className="mr-2 size-5" /> Start Risk Engine
-              </Button>
-            ) : (
-              <Button onClick={stopMonitoring} size="lg" variant="destructive" className="font-semibold shadow-lg">
-                <X className="mr-2 size-5" /> Stop Engine
-              </Button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <Alert className="bg-blue-500/10 border-blue-500/30">
-        <Info className="size-4 text-blue-600" />
-        <AlertTitle className="text-sm font-semibold text-blue-900 dark:text-blue-200">Fusion Formula</AlertTitle>
-        <AlertDescription className="text-xs text-blue-800 dark:text-blue-300 mt-1 font-mono">
-          Final Score = Voice×50% + Movement×30% + GPS×20%
-          · SOS threshold = {FUSION_SOS_THRESHOLD}/100
-        </AlertDescription>
-      </Alert>
-
-      {/* Phase 3 Predictive Intelligence Link */}
-      <div className="flex items-center justify-between p-4 rounded-2xl bg-gradient-to-r from-purple-500/10 via-purple-500/5 to-transparent border border-purple-500/20">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-xl bg-purple-500/20 text-purple-600 dark:text-purple-400">
-            <Sparkles className="size-4" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold">Proactive Early Warning Active (Phase 3)</p>
-            <p className="text-xs text-muted-foreground">Spatial hotspot clustering, temporal hazard modeling, and check-in safety timers.</p>
-          </div>
-        </div>
-        <Link to="/user/predictive-safety">
-          <Button size="sm" variant="outline" className="text-xs border-purple-300 hover:bg-purple-500/10 text-purple-700 dark:text-purple-300">
-            Open Predictive Safety →
-          </Button>
-        </Link>
-      </div>
-
-      <div className="grid gap-6 md:grid-cols-5">
-        {/* Final score card */}
-        <Card className="md:col-span-3 shadow-sm">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2"><Layers className="size-5 text-primary" />Unified Risk Score</CardTitle>
-            <CardDescription>Weighted combination of all three AI channels</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6 pt-4">
-            {/* Big score */}
-            <div className="rounded-2xl border bg-muted/30 p-6 flex flex-col items-center text-center gap-4">
-              <div className="flex items-center gap-3">
-                <span className="text-xs uppercase font-semibold tracking-wider text-muted-foreground">Final Risk Score</span>
-                {fusionResult && (
-                  <Badge className={riskColor(fusionResult.final_risk_level)}>
-                    {fusionResult.final_risk_level}
-                  </Badge>
-                )}
-              </div>
-              <div className="text-6xl font-extrabold tracking-tight">
-                {fusionResult?.final_risk_score ?? 0}<span className="text-2xl font-medium text-muted-foreground"> / 100</span>
-              </div>
-              {fusionResult?.recommendation && (
-                <div className={`text-lg font-bold tracking-wide ${recColor(fusionResult.recommendation)}`}>
-                  → {fusionResult.recommendation}
-                </div>
-              )}
-              <div className="w-full max-w-md">
-                <Progress value={fusionResult?.final_risk_score ?? 0} className="h-4" />
-                <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-                  <span>0 SAFE</span><span>30</span><span>50</span><span>78 SOS</span><span>100</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Component bars */}
-            <div className="space-y-4">
-              {scoreBar(fusionResult?.component_scores.voice_risk_score ?? voiceScore, "Voice AI", <Bot className="size-4 text-purple-500" />, "50%")}
-              {scoreBar(fusionResult?.component_scores.movement_risk_score ?? movementScore, "Movement AI", <Activity className="size-4 text-blue-500" />, "30%")}
-              {scoreBar(fusionResult?.component_scores.gps_context_score ?? gpsScore, "GPS Context", <MapPin className="size-4 text-emerald-500" />, "20%")}
-            </div>
-
-            {/* Contributions */}
-            {fusionResult?.risk_breakdown && (
-              <div className="rounded-xl border p-4 bg-muted/20 grid grid-cols-3 text-center text-xs gap-2">
-                <div>
-                  <div className="text-muted-foreground">Voice</div>
-                  <div className="font-bold mt-1">+{fusionResult.risk_breakdown.voice_contribution}</div>
-                </div>
-                <div>
-                  <div className="text-muted-foreground">Movement</div>
-                  <div className="font-bold mt-1">+{fusionResult.risk_breakdown.movement_contribution}</div>
-                </div>
-                <div>
-                  <div className="text-muted-foreground">GPS</div>
-                  <div className="font-bold mt-1">+{fusionResult.risk_breakdown.gps_contribution}</div>
-                </div>
-              </div>
-            )}
-
-            {/* Manual SOS button */}
-            {emergencyState === "idle" && fusionResult && fusionResult.final_risk_score >= 50 && (
-              <Button className="w-full bg-destructive text-white hover:bg-destructive/90" size="lg"
-                onClick={() => setEmergencyState("countdown")}>
-                <Siren className="mr-2 size-5" /> Trigger Emergency SOS
-              </Button>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Demo + manual controls */}
-        <Card className="md:col-span-2 shadow-sm">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base"><Zap className="size-5 text-indigo-500" />Demo Scenarios</CardTitle>
-            <CardDescription>Test fusion scenarios</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {[
-              ["safe", "All Clear 🟢", "text-emerald-500"],
-              ["low_risk", "Low Risk — Monitor 🟡", "text-yellow-500"],
-              ["voice_only", "Voice Distress Only 🎤", "text-purple-500"],
-              ["movement_only", "Movement Anomaly Only 🚶", "text-blue-500"],
-              ["high_risk", "High Risk ⚠️", "text-amber-500"],
-              ["critical_fusion", "Critical Emergency 🆘", "text-red-600"],
-            ].map(([id, label, color]) => (
-              <Button key={id} variant="outline" className="w-full justify-start text-xs font-medium"
-                disabled={analyzing} onClick={() => runFusionAnalysis({ scenario: id })}>
-                <Play className={`mr-2 size-3.5 ${color}`} />{label}
-              </Button>
-            ))}
-          </CardContent>
-
-          {/* Manual sliders alternate: manual input boxes */}
-          <CardContent className="border-t pt-4 space-y-3">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Manual Input</p>
-            {[
-              ["Voice", voiceScore, setVoiceScore, "text-purple-500"],
-              ["Movement", movementScore, setMovementScore, "text-blue-500"],
-              ["GPS", gpsScore, setGpsScore, "text-emerald-500"],
-            ].map(([label, val, setter, color]: any) => (
-              <div key={label} className="space-y-1">
-                <div className="flex items-center justify-between text-xs">
-                  <span className={`font-medium ${color}`}>{label} Score</span>
-                  <span className="font-bold">{val}</span>
-                </div>
-                <input
-                  type="range" min={0} max={100} value={val}
-                  onChange={(e) => setter(Number(e.target.value))}
-                  className="w-full accent-primary"
-                />
-              </div>
-            ))}
-            <Button className="w-full mt-2" size="sm" disabled={analyzing}
-              onClick={() => runFusionAnalysis({ voice: voiceScore, movement: movementScore, gps: gpsScore })}>
-              {analyzing ? <Loader2 className="mr-2 size-4 animate-spin" /> : <TrendingUp className="mr-2 size-4" />}
-              Analyze Now
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* History */}
-      <Card className="shadow-sm">
-        <CardHeader className="flex flex-row items-center justify-between">
-          <div>
-            <CardTitle className="text-base">Fusion Analysis Log</CardTitle>
-            <CardDescription>Recent unified risk assessments</CardDescription>
-          </div>
-          <Button variant="ghost" size="sm" onClick={() => setHistory([])} className="text-xs">
-            <RefreshCw className="mr-1 size-3" /> Clear
-          </Button>
-        </CardHeader>
-        <CardContent>
-          {history.length === 0 ? (
-            <div className="text-center py-6 text-xs text-muted-foreground">No analysis yet. Start monitoring or run a demo.</div>
-          ) : (
-            <div className="divide-y text-xs">
-              {history.map((item, i) => (
-                <div key={i} className="py-2.5 flex items-center justify-between gap-2 flex-wrap">
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-muted-foreground">{item.time}</span>
-                    <span className={`font-bold ${recColor(item.result.recommendation)}`}>{item.result.recommendation}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-muted-foreground">
-                      V:{item.result.component_scores.voice_risk_score} M:{item.result.component_scores.movement_risk_score} G:{item.result.component_scores.gps_context_score}
-                    </span>
-                    <span className="font-bold">→ {item.result.final_risk_score}/100</span>
-                    <Badge className={riskColor(item.result.final_risk_level)}>{item.result.final_risk_level}</Badge>
-                  </div>
-                </div>
-              ))}
-            </div>
+      {/* ── AI SENSOR STATUS TILES ────────────────────────────── */}
+      <div className="rounded-3xl border bg-card p-5 shadow-sm space-y-3">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-black uppercase tracking-wider text-muted-foreground">
+            AI Safety Status
+          </span>
+          {analyzing && (
+            <span className="text-[10px] text-primary flex items-center gap-1 font-semibold">
+              <RefreshCw className="size-3 animate-spin" /> Live Syncing
+            </span>
           )}
-        </CardContent>
-      </Card>
+        </div>
+
+        <div className="divide-y text-xs">
+          {/* Voice Guard */}
+          <div className="py-2.5 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <Mic className="size-4 text-blue-500" />
+              <span className="font-semibold text-foreground">Voice Guard</span>
+            </div>
+            <span
+              className={`font-bold flex items-center gap-1 ${
+                voiceAvailable ? "text-emerald-600" : "text-muted-foreground"
+              }`}
+            >
+              {voiceAvailable ? (
+                <>
+                  <CheckCircle2 className="size-3.5" /> Active
+                </>
+              ) : (
+                <>
+                  <XCircle className="size-3.5" /> Unavailable
+                </>
+              )}
+            </span>
+          </div>
+
+          {/* Movement Sensor */}
+          <div className="py-2.5 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <Activity className="size-4 text-purple-500" />
+              <span className="font-semibold text-foreground">Movement Anomaly</span>
+            </div>
+            <span
+              className={`font-bold flex items-center gap-1 ${
+                motionAvailable ? "text-emerald-600" : "text-muted-foreground"
+              }`}
+            >
+              {motionAvailable ? (
+                <>
+                  <CheckCircle2 className="size-3.5" /> Active
+                </>
+              ) : (
+                <>
+                  <XCircle className="size-3.5" /> Unavailable
+                </>
+              )}
+            </span>
+          </div>
+
+          {/* Location & GPS */}
+          <div className="py-2.5 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <Navigation className="size-4 text-emerald-500" />
+              <span className="font-semibold text-foreground">Location Guard</span>
+            </div>
+            <span
+              className={`font-bold flex items-center gap-1 ${
+                locationAvailable ? "text-emerald-600" : "text-muted-foreground"
+              }`}
+            >
+              {locationAvailable ? (
+                <>
+                  <CheckCircle2 className="size-3.5" /> Active
+                </>
+              ) : (
+                <>
+                  <XCircle className="size-3.5" /> Unavailable
+                </>
+              )}
+            </span>
+          </div>
+
+          {/* Predictive Safety */}
+          <div className="py-2.5 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <Sparkles className="size-4 text-amber-500" />
+              <span className="font-semibold text-foreground">Prediction Engine</span>
+            </div>
+            <span
+              className={`font-bold flex items-center gap-1 ${
+                predictionAvailable ? "text-emerald-600" : "text-muted-foreground"
+              }`}
+            >
+              {predictionAvailable ? (
+                <>
+                  <CheckCircle2 className="size-3.5" /> Active
+                </>
+              ) : (
+                <>
+                  <XCircle className="size-3.5" /> Unavailable
+                </>
+              )}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── LIVE TRANSCRIPT DISPLAY ─────────────────────────── */}
+      {isMonitoring && (
+        <div className="rounded-2xl border bg-card p-4 text-xs space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="font-bold text-muted-foreground uppercase text-[10px] tracking-wider flex items-center gap-1">
+              <Mic className="size-3" /> Live Voice Monitor
+            </span>
+            <span className={`text-[10px] font-bold flex items-center gap-1 ${speechActive ? 'text-emerald-600' : 'text-muted-foreground'}`}>
+              <span className={`inline-block size-2 rounded-full ${speechActive ? 'bg-emerald-500 animate-pulse' : 'bg-muted-foreground'}`} />
+              {speechActive ? 'Listening' : 'Inactive'}
+            </span>
+          </div>
+          <div className="bg-muted/50 rounded-xl p-3 min-h-[40px] text-foreground/70 italic">
+            {liveTranscript ? `"${liveTranscript}"` : 'Speak to see transcript here...'}
+          </div>
+        </div>
+      )}
+
+      {/* ── SIMULATION / TEST BAR (FOR DEMO SCENARIOS) ───────── */}
+      <div className="rounded-2xl border bg-muted/30 p-4 text-xs space-y-3">
+        <div className="font-bold text-muted-foreground uppercase text-[10px] tracking-wider">
+          Safety Scenario Test Controls
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => runEvaluation("safe")}
+            className="text-[11px] h-8 bg-card"
+          >
+            Test Normal
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => runEvaluation("high_risk")}
+            className="text-[11px] h-8 bg-card text-amber-600"
+          >
+            Test High Risk
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => runEvaluation("critical_fusion")}
+            className="text-[11px] h-8 bg-card text-red-600 font-bold"
+          >
+            Test Emergency
+          </Button>
+        </div>
+        <div className="border-t pt-2">
+          <Button
+            size="sm"
+            onClick={() => {
+              console.log("🚨 MANUAL TEST: Triggering voice SOS directly");
+              toast.warning('🚨 Manual SOS Test — Triggering distress!', { duration: 3000 });
+              liveVoiceRiskRef.current = 98;
+              triggerImmediateDistress("manual_test_distress", 98);
+            }}
+            className="w-full h-10 bg-red-600 hover:bg-red-700 text-white font-black text-xs rounded-xl"
+          >
+            <Siren className="size-4 mr-2" /> TEST VOICE SOS (Simulate Distress)
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
