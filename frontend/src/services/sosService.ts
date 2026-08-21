@@ -8,12 +8,12 @@ export const sendSOS = async (data: {
   riskLevel?: string;
   riskScore?: number;
 }) => {
-
   console.log("SENDING SOS", data);
-
   const response = await api.post("/alerts", data);
-
   console.log("RESPONSE", response);
-
   return response;
+};
+
+export const resolveAlert = async (id: string, notes?: string) => {
+  return api.post(`/alerts/${id}/resolve`, { notes });
 };
