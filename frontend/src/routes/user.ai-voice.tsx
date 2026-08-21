@@ -653,18 +653,18 @@ function AIVoiceMonitorPage() {
                   </p>
                 </div>
               </div>
-              <div className="flex flex-col gap-2 shrink-0">
+              <div className="flex flex-col gap-2 w-full md:w-auto shrink-0">
                 <Button
                   variant="destructive"
                   size="lg"
                   onClick={cancelEmergency}
-                  className="font-bold"
+                  className="font-bold w-full md:w-auto text-xs sm:text-sm"
                 >
                   <X className="mr-2 size-4" /> Cancel Emergency
                 </Button>
                 <Button
                   size="sm"
-                  className="bg-red-700 text-white hover:bg-red-800"
+                  className="bg-red-700 text-white hover:bg-red-800 w-full md:w-auto text-xs sm:text-sm"
                   onClick={() => {
                     if (cancelTimerRef.current) clearInterval(cancelTimerRef.current);
                     fireSOS();

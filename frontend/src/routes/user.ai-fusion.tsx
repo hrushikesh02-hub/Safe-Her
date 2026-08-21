@@ -556,36 +556,33 @@ function SafetyShieldPage() {
 
       {/* Emergency Countdown Intercept Banner */}
       {isEmergencyTriggered && (
-        <div className="bg-red-50 dark:bg-red-950/40 border-2 border-red-500 rounded-2xl p-5 text-red-950 dark:text-red-200 shadow-xl animate-pulse">
-          <div className="flex items-start gap-3.5">
-            <div className="size-12 rounded-full bg-red-600 text-white flex items-center justify-center shrink-0 shadow-md">
-              <Siren className="size-6 animate-bounce" />
+        <div className="bg-red-50 dark:bg-red-950/40 border-2 border-red-500 rounded-2xl p-4 sm:p-5 text-red-950 dark:text-red-200 shadow-xl animate-pulse overflow-hidden">
+          <div className="flex items-start gap-3 sm:gap-3.5">
+            <div className="size-10 sm:size-12 rounded-full bg-red-600 text-white flex items-center justify-center shrink-0 shadow-md">
+              <Siren className="size-5 sm:size-6 animate-bounce" />
             </div>
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <h3 className="font-extrabold text-lg text-red-700 dark:text-red-400">
+                <h3 className="font-extrabold text-base sm:text-lg text-red-700 dark:text-red-400">
                   🚨 POTENTIAL DISTRESS DETECTED!
                 </h3>
               </div>
-              <p className="text-xs font-semibold text-red-800 dark:text-red-300 mt-1">
-                Reason: <span className="underline">{emergencyReason}</span>
-              </p>
-              <div className="mt-2 flex items-baseline gap-2">
+              <div className="mt-2 flex items-baseline gap-2 flex-wrap">
                 <span className="text-xs text-red-700 dark:text-red-300 font-medium">
                   Dispatching automated SOS to contacts & nearby volunteers in:
                 </span>
-                <span className="text-3xl font-black text-red-600 dark:text-red-400">
+                <span className="text-2xl sm:text-3xl font-black text-red-600 dark:text-red-400">
                   {countdown}s
                 </span>
               </div>
             </div>
           </div>
 
-          <div className="mt-4 flex items-center gap-3">
+          <div className="mt-4 flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-2.5 sm:gap-3 w-full">
             <Button
               variant="outline"
               onClick={cancelEmergency}
-              className="flex-1 font-bold text-sm h-11 border-red-300 dark:border-red-800 hover:bg-red-100 dark:hover:bg-red-900/50 text-red-900 dark:text-red-200"
+              className="w-full sm:flex-1 font-bold text-xs sm:text-sm h-11 border-red-300 dark:border-red-800 hover:bg-red-100 dark:hover:bg-red-900/50 text-red-900 dark:text-red-200"
             >
               I'm Safe (Cancel Alert)
             </Button>
@@ -593,7 +590,7 @@ function SafetyShieldPage() {
               variant="destructive"
               onClick={() => dispatchEmergencySOS(emergencyReason)}
               disabled={isDispatching}
-              className="flex-1 font-bold text-sm h-11 bg-red-600 hover:bg-red-700 text-white shadow-lg"
+              className="w-full sm:flex-1 font-bold text-xs sm:text-sm h-11 bg-red-600 hover:bg-red-700 text-white shadow-md"
             >
               {isDispatching ? (
                 <Loader2 className="size-4 animate-spin mr-2" />
@@ -607,26 +604,26 @@ function SafetyShieldPage() {
       )}
 
       {/* Primary Shield Card */}
-      <div className="bg-card rounded-2xl border border-border/80 p-6 sm:p-8 shadow-xs text-center space-y-6">
+      <div className="bg-card rounded-2xl border border-border/80 p-5 sm:p-8 shadow-xs text-center space-y-6">
         {/* Shield Icon & Status */}
         <div className="flex flex-col items-center">
           <div
-            className={`size-24 rounded-full flex items-center justify-center transition-all shadow-md ${
+            className={`size-20 sm:size-24 rounded-full flex items-center justify-center transition-all shadow-md ${
               isMonitoring
                 ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400 border-4 border-emerald-300 dark:border-emerald-700 animate-pulse"
                 : "bg-muted text-muted-foreground border-2 border-border"
             }`}
           >
             {isMonitoring ? (
-              <ShieldCheck className="size-12" />
+              <ShieldCheck className="size-10 sm:size-12" />
             ) : (
-              <Power className="size-10" />
+              <Power className="size-8 sm:size-10" />
             )}
           </div>
 
-          <div className="mt-4 flex items-center gap-3">
+          <div className="mt-4 flex items-center justify-center gap-2 sm:gap-3 flex-wrap">
             <Badge
-              className={`text-xs font-bold px-3.5 py-1 ${
+              className={`text-xs font-bold px-3 py-1 ${
                 isMonitoring
                   ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
                   : "bg-muted text-muted-foreground"

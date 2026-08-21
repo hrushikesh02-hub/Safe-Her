@@ -293,11 +293,11 @@ function AIMovementMonitorPage() {
           )}
 
           {emergencyState === "countdown" && (
-            <div className="flex items-start gap-4 justify-between flex-wrap">
+            <div className="flex flex-col md:flex-row items-start md:items-center gap-4 justify-between">
               <div className="flex items-center gap-3">
                 <Siren className="size-10 text-red-600 animate-bounce shrink-0" />
                 <div>
-                  <div className="font-bold text-red-700 dark:text-red-400 text-xl">🚨 MOVEMENT EMERGENCY DETECTED</div>
+                  <div className="font-bold text-red-700 dark:text-red-400 text-lg sm:text-xl">🚨 MOVEMENT EMERGENCY DETECTED</div>
                   <div className="text-sm text-red-600 dark:text-red-300 mt-1">
                     Anomaly: <strong className="capitalize">{movementResult?.anomaly_type}</strong> · Risk: <strong>{movementResult?.risk_level}</strong> ({movementResult?.movement_risk_score}/100)
                   </div>
@@ -306,11 +306,11 @@ function AIMovementMonitorPage() {
                   </div>
                 </div>
               </div>
-              <div className="flex flex-col gap-2">
-                <Button variant="destructive" size="lg" onClick={cancelEmergency}>
+              <div className="flex flex-col gap-2 w-full md:w-auto shrink-0">
+                <Button variant="destructive" size="lg" onClick={cancelEmergency} className="w-full md:w-auto font-bold text-xs sm:text-sm">
                   <X className="mr-2 size-4" /> Cancel Emergency
                 </Button>
-                <Button size="sm" className="bg-red-700 text-white hover:bg-red-800"
+                <Button size="sm" className="bg-red-700 text-white hover:bg-red-800 w-full md:w-auto text-xs sm:text-sm"
                   onClick={() => { if (cancelTimerRef.current) clearInterval(cancelTimerRef.current); fireSOS(); }}
                   disabled={sosTriggerInProgress}>
                   {sosTriggerInProgress ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Siren className="mr-2 size-4" />}
