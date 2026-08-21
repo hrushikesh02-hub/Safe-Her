@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="SafeHer AI Service",
-    description="AI Safety Platform: Voice Distress Detection (Phase 1) + Movement & GPS Intelligence + Multi-Modal Risk Fusion (Phase 2)",
+    description="SafeHer Multi-Modal AI Platform: Voice Distress AI (Phase 1), Movement & Fall Detection (Phase 2), Multi-Modal Risk Fusion (Phase 2), Predictive Safety Engine (Phase 3), Response Coordination (Phase 4)",
     version="2.0.0",
     lifespan=lifespan
 )
@@ -59,7 +59,12 @@ async def root():
         "service": "SafeHer AI Safety Platform",
         "status": "online",
         "version": "2.0.0",
-        "phase": "Phase 2 — Voice + Movement + GPS + Fusion",
+        "phases_active": [
+            "Phase 1: Voice AI Distress Detection",
+            "Phase 2: Movement AI & Multi-Modal Risk Fusion",
+            "Phase 3: Predictive Safety & Early Warning",
+            "Phase 4: Response Coordination & Volunteer Dispatch"
+        ],
         "demo_mode": os.getenv("AI_DEMO_MODE", "true").lower() == "true",
         "docs_url": "/docs"
     }
