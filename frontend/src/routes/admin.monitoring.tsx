@@ -839,27 +839,34 @@ function Monitoring() {
                   {(() => {
                     const backendBase = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/api$/, "");
                     const token = typeof window !== "undefined" ? localStorage.getItem("token") : "";
-                    const buildStreamUrl = (relativeUrl: string) =>
-                      `${backendBase}${relativeUrl}?token=${encodeURIComponent(token || "")}`;
+                    const buildStreamUrl = (relativeUrl: string, timestamp?: any) =>
+                      `${backendBase}${relativeUrl}?token=${encodeURIComponent(token || "")}&_t=${encodeURIComponent(timestamp || "")}`;
 
                     return (
                       <>
                         {hasVideoEvidence ? (
                           <div className="space-y-1.5">
-                            <span className="text-[11px] text-muted-foreground flex items-center gap-1 font-medium">
-                              <VideoIcon className="size-3.5 text-red-500" /> Camera Feed
-                              {evidence.videoRecording.durationSec
-                                ? ` (${evidence.videoRecording.durationSec}s)`
-                                : ""}
-                            </span>
-                            <div className="rounded-xl overflow-hidden bg-black border aspect-video max-h-56 relative flex items-center justify-center shadow-inner">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] text-muted-foreground flex items-center gap-1 font-medium">
+                                <VideoIcon className="size-3.5 text-red-500" /> Live Camera Stream
+                                {evidence.videoRecording.durationSec
+                                  ? ` (${evidence.videoRecording.durationSec}s)`
+                                  : ""}
+                              </span>
+                              <span className="text-[10px] text-emerald-600 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                                BROADCASTING
+                              </span>
+                            </div>
+                            <div className="rounded-xl overflow-hidden bg-black border aspect-video max-h-64 relative flex items-center justify-center shadow-inner">
                               <video
-                                key={evidence.videoRecording.url}
+                                key={`${evidence.videoRecording.url}_${evidence.videoRecording.recordedAt || ""}`}
                                 controls
+                                autoPlay
+                                muted
                                 playsInline
                                 preload="auto"
                                 className="w-full h-full object-contain"
-                                src={buildStreamUrl(evidence.videoRecording.url)}
+                                src={buildStreamUrl(evidence.videoRecording.url, evidence.videoRecording.recordedAt)}
                               >
                                 Your browser does not support the video tag.
                               </video>

@@ -37,6 +37,7 @@ import {
   Layers,
   BarChart2,
   Calendar,
+  Video as VideoIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1712,6 +1713,60 @@ function AdminCommandCenter() {
                   </div>
                 </div>
               </div>
+
+              {/* Emergency Evidence Media Player */}
+              {inspectData.evidence && (inspectData.evidence.hasVideo || inspectData.evidence.hasAudio || inspectData.evidence.videoUrl || inspectData.evidence.audioUrl) && (() => {
+                const backendBase = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/api$/, "");
+                const token = typeof window !== "undefined" ? localStorage.getItem("token") || "" : "";
+                const buildStreamUrl = (url: string) => `${backendBase}${url}?token=${encodeURIComponent(token)}`;
+
+                return (
+                  <div className="rounded-xl border bg-muted/20 p-3 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-foreground flex items-center gap-1.5 text-xs">
+                        <Radio className="size-3.5 text-red-600 animate-pulse" />
+                        Captured Emergency Evidence
+                      </span>
+                      <span className="text-[10px] bg-red-100 text-red-700 dark:bg-red-950 px-2 py-0.5 rounded font-bold">
+                        VERIFIED EVIDENCE
+                      </span>
+                    </div>
+
+                    {inspectData.evidence.videoUrl && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                            <VideoIcon className="size-3 text-red-500" /> Emergency Video Recording ({inspectData.evidence.videoDuration || 0}s)
+                          </span>
+                        </div>
+                        <video
+                          controls
+                          playsInline
+                          preload="auto"
+                          className="w-full rounded-lg bg-black max-h-52 object-contain"
+                          src={buildStreamUrl(inspectData.evidence.videoUrl)}
+                        />
+                      </div>
+                    )}
+
+                    {inspectData.evidence.audioUrl && (
+                      <div className="space-y-1.5 pt-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                            <Volume2 className="size-3 text-blue-500" /> Emergency Voice Recording ({inspectData.evidence.audioDuration || 0}s)
+                          </span>
+                        </div>
+                        <audio
+                          controls
+                          preload="auto"
+                          className="w-full"
+                          src={buildStreamUrl(inspectData.evidence.audioUrl)}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Timeline */}
               {inspectData.timeline && inspectData.timeline.length > 0 && (

@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { Shield, Eye, EyeOff, Mail, Lock, AlertCircle, ArrowRight } from "lucide-react";
+import { Shield, Eye, EyeOff, Mail, Lock, AlertCircle, ArrowRight, Siren } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -63,7 +63,7 @@ function LoginPage() {
   return (
     <div className="grid min-h-dvh lg:grid-cols-12 bg-background">
       {/* Left Column: Reassuring SafeHer Hero Showcase */}
-      <div className="relative hidden lg:flex lg:col-span-5 bg-slate-900 text-white p-10 xl:p-12 flex-col justify-between overflow-hidden">
+      <div className="relative hidden lg:flex lg:col-span-5 bg-slate-900 text-white p-8 xl:p-12 flex-col justify-between overflow-hidden">
         {/* Subtle decorative background glow */}
         <div className="absolute top-0 right-0 size-80 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute bottom-0 left-0 size-80 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -75,7 +75,7 @@ function LoginPage() {
           <span className="text-lg font-bold tracking-tight text-white">SafeHer</span>
         </Link>
 
-        <div className="relative z-10 space-y-4">
+        <div className="relative z-10 space-y-4 my-auto">
           <div className="inline-block px-3 py-1 rounded-full bg-white/10 text-indigo-200 text-xs font-semibold backdrop-blur">
             Personal Safety & Emergency Response
           </div>
@@ -93,9 +93,9 @@ function LoginPage() {
       </div>
 
       {/* Right Column: Sign In Form */}
-      <div className="lg:col-span-7 flex items-center justify-center p-6 sm:p-12">
-        <form onSubmit={onSubmit} className="w-full max-w-md space-y-5">
-          <div className="lg:hidden flex items-center gap-2 mb-6">
+      <div className="lg:col-span-7 flex items-center justify-center p-4 sm:p-8 lg:p-12">
+        <form onSubmit={onSubmit} className="w-full max-w-md space-y-4 sm:space-y-5">
+          <div className="lg:hidden flex items-center gap-2 mb-2 sm:mb-4">
             <div className="grid size-8 place-items-center rounded-lg bg-indigo-600 text-white">
               <Shield className="size-4.5" />
             </div>
@@ -107,7 +107,34 @@ function LoginPage() {
             <p className="mt-1 text-xs sm:text-sm text-muted-foreground">Enter your credentials to access your safety portal</p>
           </div>
 
-          <div className="space-y-1.5">
+          {/* Emergency SOS Banner (Quick Access for Distress) */}
+          <div className="rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50/70 dark:bg-red-950/30 p-3 sm:p-3.5 flex items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="size-8 rounded-lg bg-red-600 text-white flex items-center justify-center shrink-0">
+                <Siren className="size-4 animate-pulse" />
+              </div>
+              <div className="min-w-0 text-left">
+                <span className="text-xs font-bold text-red-950 dark:text-red-200 block truncate">
+                  Immediate Emergency?
+                </span>
+                <span className="text-[11px] text-red-800 dark:text-red-300 block truncate">
+                  Trigger SOS without signing in
+                </span>
+              </div>
+            </div>
+            <Link to="/user/sos" className="shrink-0">
+              <Button
+                type="button"
+                size="sm"
+                variant="destructive"
+                className="bg-red-600 hover:bg-red-700 text-white font-bold text-[11px] h-8 px-3 rounded-lg shadow-xs"
+              >
+                SOS Now &rarr;
+              </Button>
+            </Link>
+          </div>
+
+          <div className="space-y-1.5 text-left">
             <Label htmlFor="email" className="text-xs font-medium">Email Address</Label>
             <div className="relative">
               <Mail className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -117,13 +144,13 @@ function LoginPage() {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="pl-9 text-xs h-10"
+                className="pl-9 text-xs h-10 sm:h-11"
                 placeholder="name@example.com"
               />
             </div>
           </div>
 
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 text-left">
             <div className="flex items-center justify-between">
               <Label htmlFor="pw" className="text-xs font-medium">Password</Label>
               <button type="button" onClick={() => toast.info("Please contact SafeHer admin to reset password.")} className="text-[11px] font-semibold text-indigo-600 hover:underline">
@@ -138,7 +165,7 @@ function LoginPage() {
                 required
                 value={pw}
                 onChange={(e) => setPw(e.target.value)}
-                className="pl-9 pr-10 text-xs h-10"
+                className="pl-9 pr-10 text-xs h-10 sm:h-11"
                 placeholder="••••••••"
               />
               <button
@@ -155,7 +182,7 @@ function LoginPage() {
           <Button
             type="submit"
             disabled={loading}
-            className="w-full h-11 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs"
+            className="w-full h-11 sm:h-12 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs sm:text-sm rounded-xl shadow-xs"
           >
             {loading ? "Signing in..." : "Sign In"}
           </Button>
@@ -166,13 +193,6 @@ function LoginPage() {
               Create an account
             </Link>
           </p>
-
-          <div className="rounded-2xl border border-border/80 bg-muted/30 p-3.5 text-xs text-muted-foreground text-center">
-            Need emergency help immediately without signing in?{" "}
-            <Link to="/user/sos" className="font-bold text-red-600 hover:underline block mt-0.5">
-              Open Emergency SOS &rarr;
-            </Link>
-          </div>
         </form>
       </div>
     </div>

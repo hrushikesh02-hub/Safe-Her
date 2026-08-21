@@ -144,6 +144,11 @@ export const streamEvidenceFile = async (req: AuthRequest, res: Response): Promi
     const fileSize = stat.size;
     const range = req.headers.range;
 
+    // Set CORS & Media embedding headers
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    res.setHeader("Accept-Ranges", "bytes");
+
     if (range) {
       // Range request (e.g. bytes=0-1024000)
       const parts = range.replace(/bytes=/, "").split("-");
@@ -164,6 +169,8 @@ export const streamEvidenceFile = async (req: AuthRequest, res: Response): Promi
         "Content-Length": chunksize,
         "Content-Type": contentType,
         "Cache-Control": "private, no-cache, no-store, must-revalidate",
+        "Access-Control-Allow-Origin": "*",
+        "Cross-Origin-Resource-Policy": "cross-origin",
       });
 
       fileStream.pipe(res);
@@ -174,6 +181,8 @@ export const streamEvidenceFile = async (req: AuthRequest, res: Response): Promi
         "Content-Type": contentType,
         "Accept-Ranges": "bytes",
         "Cache-Control": "private, no-cache, no-store, must-revalidate",
+        "Access-Control-Allow-Origin": "*",
+        "Cross-Origin-Resource-Policy": "cross-origin",
       });
 
       fs.createReadStream(filePath).pipe(res);
