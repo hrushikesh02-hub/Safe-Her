@@ -1,17 +1,19 @@
 import os
 import re
 import logging
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 from app.services.risk_calculator import VoiceRiskCalculator
 
 logger = logging.getLogger(__name__)
 
 EMERGENCY_KEYWORDS = [
     "help",
+    "save",
     "save me",
     "please help",
     "please help me",
     "help me",
+    "somebody help",
     "bachao",
     "mujhe bachao",
     "sos",
@@ -20,9 +22,15 @@ EMERGENCY_KEYWORDS = [
     "in danger",
     "i am in danger",
     "call police",
+    "call the police",
     "stop",
     "leave me",
-    "don't touch me"
+    "leave me alone",
+    "don't touch me",
+    "don't touch",
+    "dont touch",
+    "let me go",
+    "get away"
 ]
 
 class DistressDetector:

@@ -6,6 +6,10 @@ import { AuthRequest } from "../middleware/authMiddleware";
 import SafeZone from "../models/SafeZone";
 import { EmergencyDispatchService } from "../services/emergencyDispatchService";
 import { sendEmail } from "../config/email";
+import { SafetyHotspotEngine } from "../services/safetyHotspotEngine";
+import { AIInsightEngine } from "../services/aiInsightEngine";
+import { SafetyRecommendationEngine } from "../services/safetyRecommendationEngine";
+import { SafetyReportService } from "../services/safetyReportService";
 
 export const getDashboardStats = async (
   req: Request,
@@ -701,6 +705,665 @@ export const getRecentActivities = async (req: any, res: any) => {
 
     res.json({ success: true, data: activities });
   } catch (err) {
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+/* ===================================================================
+   PHASE 5 — AI SAFETY INTELLIGENCE COMMAND CENTER & ADVANCED ANALYTICS
+=================================================================== */
+
+/**
+ * Helper to compute period-over-period percentage change
+ */
+function calculateChangePct(current: number, previous: number): number {
+  if (previous === 0) return current > 0 ? 100 : 0;
+  return Math.round(((current - previous) / previous) * 100);
+}
+
+/**
+ * 1. Command Center Top-Level Overview & Period Comparisons
+ * GET /api/admin/command-center/overview
+ */
+export const getCommandCenterOverview = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterdayStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
+    const twoDaysAgoStart = new Date(todayStart.getTime() - 48 * 60 * 60 * 1000);
+
+    const thisWeekStart = new Date(todayStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const lastWeekStart = new Date(todayStart.getTime() - 14 * 24 * 60 * 60 * 1000);
+
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastMonthEnd = new Date(todayStart.getFullYear(), todayStart.getMonth(), 0, 23, 59, 59, 999);
+
+    const [
+      allAlerts,
+      totalUsers,
+      totalVolunteers,
+      verifiedVolunteers,
+      activeResponders,
+      safeZonesCount,
+    ] = await Promise.all([
+      Alert.find().lean(),
+      User.countDocuments({ role: "user" }),
+      User.countDocuments({ role: "volunteer" }),
+      User.countDocuments({ role: "volunteer", isVerified: true }),
+      User.countDocuments({ role: "volunteer", volunteerStatus: "BUSY" }),
+      SafeZone.countDocuments(),
+    ]);
+
+    const activeIncidents = allAlerts.filter((a: any) => a.status === "active" || a.status === "accepted").length;
+    const criticalIncidents = allAlerts.filter((a: any) =>
+      (a.status === "active" || a.status === "accepted") && (a.priority === "P1" || a.riskLevel === "CRITICAL")
+    ).length;
+    const highRiskIncidents = allAlerts.filter((a: any) =>
+      (a.status === "active" || a.status === "accepted") && (a.riskLevel === "HIGH" || a.priority === "P2")
+    ).length;
+    const resolvedIncidents = allAlerts.filter((a: any) => a.status === "resolved").length;
+
+    // Calculate response & resolution durations
+    let totalRespSec = 0;
+    let respCount = 0;
+    let totalResolveSec = 0;
+    let resolveCount = 0;
+
+    allAlerts.forEach((a: any) => {
+      if (a.acceptedAt && a.createdAt) {
+        totalRespSec += Math.max(0, (new Date(a.acceptedAt).getTime() - new Date(a.createdAt).getTime()) / 1000);
+        respCount++;
+      }
+      if (a.resolutionSummary?.totalResponseDurationSec) {
+        totalResolveSec += a.resolutionSummary.totalResponseDurationSec;
+        resolveCount++;
+      } else if (a.resolvedAt && a.createdAt) {
+        totalResolveSec += Math.max(0, (new Date(a.resolvedAt).getTime() - new Date(a.createdAt).getTime()) / 1000);
+        resolveCount++;
+      }
+    });
+
+    const avgResponseTimeSec = respCount > 0 ? Math.round(totalRespSec / respCount) : 0;
+    const avgResolutionTimeSec = resolveCount > 0 ? Math.round(totalResolveSec / resolveCount) : 0;
+
+    // Period Comparisons
+    const todayAlerts = allAlerts.filter((a: any) => new Date(a.createdAt) >= todayStart);
+    const yesterdayAlerts = allAlerts.filter((a: any) => new Date(a.createdAt) >= yesterdayStart && new Date(a.createdAt) < todayStart);
+
+    const thisWeekAlerts = allAlerts.filter((a: any) => new Date(a.createdAt) >= thisWeekStart);
+    const lastWeekAlerts = allAlerts.filter((a: any) => new Date(a.createdAt) >= lastWeekStart && new Date(a.createdAt) < thisWeekStart);
+
+    const thisMonthAlerts = allAlerts.filter((a: any) => new Date(a.createdAt) >= thisMonthStart);
+    const lastMonthAlerts = allAlerts.filter((a: any) => new Date(a.createdAt) >= lastMonthStart && new Date(a.createdAt) < thisMonthStart);
+
+    const todayCritical = todayAlerts.filter((a: any) => a.priority === "P1" || a.riskLevel === "CRITICAL").length;
+    const yesterdayCritical = yesterdayAlerts.filter((a: any) => a.priority === "P1" || a.riskLevel === "CRITICAL").length;
+
+    const thisWeekCritical = thisWeekAlerts.filter((a: any) => a.priority === "P1" || a.riskLevel === "CRITICAL").length;
+    const lastWeekCritical = lastWeekAlerts.filter((a: any) => a.priority === "P1" || a.riskLevel === "CRITICAL").length;
+
+    const thisMonthCritical = thisMonthAlerts.filter((a: any) => a.priority === "P1" || a.riskLevel === "CRITICAL").length;
+    const lastMonthCritical = lastMonthAlerts.filter((a: any) => a.priority === "P1" || a.riskLevel === "CRITICAL").length;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        activeIncidents,
+        criticalIncidents,
+        highRiskIncidents,
+        resolvedIncidents,
+        totalIncidents: allAlerts.length,
+        respondersActive: activeResponders,
+        totalUsers,
+        totalVolunteers,
+        verifiedVolunteers,
+        safeZonesCount,
+        avgResponseTimeSec,
+        avgResolutionTimeSec,
+        avgResponseFormatted: `${Math.floor(avgResponseTimeSec / 60)}m ${avgResponseTimeSec % 60}s`,
+        avgResolutionFormatted: `${Math.floor(avgResolutionTimeSec / 60)}m ${avgResolutionTimeSec % 60}s`,
+        comparisons: {
+          todayVsYesterday: {
+            incidentChangePct: calculateChangePct(todayAlerts.length, yesterdayAlerts.length),
+            criticalChangePct: calculateChangePct(todayCritical, yesterdayCritical),
+            todayCount: todayAlerts.length,
+            yesterdayCount: yesterdayAlerts.length,
+          },
+          weekVsLastWeek: {
+            incidentChangePct: calculateChangePct(thisWeekAlerts.length, lastWeekAlerts.length),
+            criticalChangePct: calculateChangePct(thisWeekCritical, lastWeekCritical),
+            thisWeekCount: thisWeekAlerts.length,
+            lastWeekCount: lastWeekAlerts.length,
+          },
+          monthVsLastMonth: {
+            incidentChangePct: calculateChangePct(thisMonthAlerts.length, lastMonthAlerts.length),
+            criticalChangePct: calculateChangePct(thisMonthCritical, lastMonthCritical),
+            thisMonthCount: thisMonthAlerts.length,
+            lastMonthCount: lastMonthAlerts.length,
+          },
+        },
+      },
+    });
+  } catch (error: any) {
+    console.error("Command Center Overview Error:", error);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+/**
+ * 2. Risk Analytics (Distribution, Trends, Averages)
+ * GET /api/admin/command-center/risk-analytics
+ */
+export const getRiskAnalytics = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const allAlerts = await Alert.find().sort({ createdAt: 1 }).lean();
+
+    const criticalCount = allAlerts.filter((a: any) => a.riskLevel === "CRITICAL" || a.priority === "P1").length;
+    const highCount = allAlerts.filter((a: any) => (a.riskLevel === "HIGH" || a.priority === "P2") && a.riskLevel !== "CRITICAL").length;
+    const mediumCount = allAlerts.filter((a: any) => a.riskLevel === "MEDIUM" || a.priority === "P3").length;
+    const lowCount = allAlerts.filter((a: any) => a.riskLevel === "LOW" || a.priority === "P4" || (!a.riskLevel && !a.priority)).length;
+
+    const totalRiskScoreSum = allAlerts.reduce((sum: number, a: any) => sum + (a.finalRiskScore || a.riskScore || 50), 0);
+    const avgRiskScore = allAlerts.length > 0 ? Math.round(totalRiskScoreSum / allAlerts.length) : 0;
+
+    // Daily breakdown for past 7 days
+    const dailyData: Array<{ date: string; critical: number; high: number; medium: number; low: number; total: number; avgRisk: number }> = [];
+    const now = new Date();
+
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      const nextD = new Date(d.getTime() + 24 * 60 * 60 * 1000);
+      const dateLabel = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+      const dayAlerts = allAlerts.filter((a: any) => {
+        const created = new Date(a.createdAt);
+        return created >= d && created < nextD;
+      });
+
+      const dayCrit = dayAlerts.filter((a: any) => a.riskLevel === "CRITICAL" || a.priority === "P1").length;
+      const dayHigh = dayAlerts.filter((a: any) => a.riskLevel === "HIGH" || a.priority === "P2").length;
+      const dayMed = dayAlerts.filter((a: any) => a.riskLevel === "MEDIUM" || a.priority === "P3").length;
+      const dayLow = dayAlerts.filter((a: any) => a.riskLevel === "LOW" || a.priority === "P4").length;
+      const dayAvgRisk = dayAlerts.length > 0
+        ? Math.round(dayAlerts.reduce((sum: number, a: any) => sum + (a.finalRiskScore || a.riskScore || 50), 0) / dayAlerts.length)
+        : 0;
+
+      dailyData.push({
+        date: dateLabel,
+        critical: dayCrit,
+        high: dayHigh,
+        medium: dayMed,
+        low: dayLow,
+        total: dayAlerts.length,
+        avgRisk: dayAvgRisk,
+      });
+    }
+
+    // Weekly Trend (Past 6 Weeks)
+    const weeklyData: Array<{ week: string; total: number; critical: number; avgRisk: number }> = [];
+    for (let w = 5; w >= 0; w--) {
+      const start = new Date(now.getTime() - (w + 1) * 7 * 24 * 60 * 60 * 1000);
+      const end = new Date(now.getTime() - w * 7 * 24 * 60 * 60 * 1000);
+      const weekLabel = `W-${w === 0 ? "Now" : w}`;
+
+      const weekAlerts = allAlerts.filter((a: any) => {
+        const created = new Date(a.createdAt);
+        return created >= start && created < end;
+      });
+
+      const crit = weekAlerts.filter((a: any) => a.riskLevel === "CRITICAL" || a.priority === "P1").length;
+      const avg = weekAlerts.length > 0
+        ? Math.round(weekAlerts.reduce((sum: number, a: any) => sum + (a.finalRiskScore || a.riskScore || 50), 0) / weekAlerts.length)
+        : 0;
+
+      weeklyData.push({
+        week: weekLabel,
+        total: weekAlerts.length,
+        critical: crit,
+        avgRisk: avg,
+      });
+    }
+
+    // Monthly Trend (Past 4 Months)
+    const monthlyData: Array<{ month: string; total: number; critical: number; avgRisk: number }> = [];
+    for (let m = 3; m >= 0; m--) {
+      const mDate = new Date(now.getFullYear(), now.getMonth() - m, 1);
+      const nextMDate = new Date(now.getFullYear(), now.getMonth() - m + 1, 1);
+      const monthLabel = mDate.toLocaleDateString("en-US", { month: "short" });
+
+      const monthAlerts = allAlerts.filter((a: any) => {
+        const created = new Date(a.createdAt);
+        return created >= mDate && created < nextMDate;
+      });
+
+      const crit = monthAlerts.filter((a: any) => a.riskLevel === "CRITICAL" || a.priority === "P1").length;
+      const avg = monthAlerts.length > 0
+        ? Math.round(monthAlerts.reduce((sum: number, a: any) => sum + (a.finalRiskScore || a.riskScore || 50), 0) / monthAlerts.length)
+        : 0;
+
+      monthlyData.push({
+        month: monthLabel,
+        total: monthAlerts.length,
+        critical: crit,
+        avgRisk: avg,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        distribution: {
+          CRITICAL: criticalCount,
+          HIGH: highCount,
+          MEDIUM: mediumCount,
+          LOW: lowCount,
+          total: allAlerts.length,
+          avgRiskScore,
+          criticalPercentage: allAlerts.length > 0 ? Math.round((criticalCount / allAlerts.length) * 100) : 0,
+        },
+        dailyTrend: dailyData,
+        weeklyTrend: weeklyData,
+        monthlyTrend: monthlyData,
+      },
+    });
+  } catch (error: any) {
+    console.error("Get Risk Analytics Error:", error);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+/**
+ * 3. AI Signal & Detection Factor Analytics
+ * GET /api/admin/command-center/signal-analytics
+ */
+export const getSignalAnalytics = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const allAlerts = await Alert.find().lean();
+
+    const signalCounts: Record<string, number> = {
+      "Voice Distress": 0,
+      "Screaming / High Decibel": 0,
+      "Help Keywords": 0,
+      "Movement Anomaly": 0,
+      "Sudden Stop": 0,
+      "Route Deviation": 0,
+      "Safe Zone Exit / GPS Context": 0,
+      "Manual SOS Trigger": 0,
+    };
+
+    allAlerts.forEach((a: any) => {
+      if (a.source === "MANUAL_SOS") signalCounts["Manual SOS Trigger"]++;
+      if (a.distressType?.toLowerCase().includes("voice") || a.distressType?.toLowerCase().includes("distress")) signalCounts["Voice Distress"]++;
+      if (a.distressType?.toLowerCase().includes("scream")) signalCounts["Screaming / High Decibel"]++;
+      if (a.detectedKeywords && a.detectedKeywords.length > 0) signalCounts["Help Keywords"]++;
+      if (a.movementAnomalyType || (a.movementRiskScore && a.movementRiskScore > 40)) signalCounts["Movement Anomaly"]++;
+      if (a.suddenStop) signalCounts["Sudden Stop"]++;
+      if (a.routeDeviated) signalCounts["Route Deviation"]++;
+      if (a.gpsContextScore && a.gpsContextScore > 40) signalCounts["Safe Zone Exit / GPS Context"]++;
+    });
+
+    const totalDetections = Object.values(signalCounts).reduce((a, b) => a + b, 0) || 1;
+
+    const signalsList = Object.entries(signalCounts)
+      .map(([signal, count]) => ({
+        signal,
+        count,
+        percentage: Math.round((count / totalDetections) * 100),
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    // Source breakdown with response metrics
+    const sources = ["MANUAL_SOS", "AI_VOICE", "AI_MOVEMENT", "AI_FUSION"];
+    const sourceBreakdown = sources.map((src) => {
+      const srcAlerts = allAlerts.filter((a: any) => a.source === src);
+      const count = srcAlerts.length;
+      const criticalCount = srcAlerts.filter((a: any) => a.priority === "P1" || a.riskLevel === "CRITICAL").length;
+      const totalScore = srcAlerts.reduce((sum: number, a: any) => sum + (a.finalRiskScore || a.riskScore || 50), 0);
+      const avgRisk = count > 0 ? Math.round(totalScore / count) : 0;
+
+      let totalDuration = 0;
+      let durCount = 0;
+      srcAlerts.forEach((a: any) => {
+        if (a.resolutionSummary?.totalResponseDurationSec) {
+          totalDuration += a.resolutionSummary.totalResponseDurationSec;
+          durCount++;
+        }
+      });
+      const avgDuration = durCount > 0 ? Math.round(totalDuration / durCount) : 0;
+
+      return {
+        source: src,
+        incidentCount: count,
+        criticalCount,
+        criticalPercentage: count > 0 ? Math.round((criticalCount / count) * 100) : 0,
+        averageRisk: avgRisk,
+        avgResponseDurationSec: avgDuration,
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        signals: signalsList,
+        totalDetections,
+        sources: sourceBreakdown,
+      },
+    });
+  } catch (error: any) {
+    console.error("Get Signal Analytics Error:", error);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+/**
+ * 4. Safety Hotspot Geospatial Engine API
+ * GET /api/admin/command-center/hotspots
+ */
+export const getSafetyHotspots = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { startDate, endDate, minIncidents } = req.query;
+
+    const hotspots = await SafetyHotspotEngine.calculateHotspots({
+      startDate: startDate ? new Date(startDate as string) : undefined,
+      endDate: endDate ? new Date(endDate as string) : undefined,
+      minIncidents: minIncidents ? parseInt(minIncidents as string, 10) : 1,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        hotspots,
+        totalHotspots: hotspots.length,
+      },
+    });
+  } catch (error: any) {
+    console.error("Get Safety Hotspots Error:", error);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+/**
+ * 5. Time-Based Analytics (24-Hour & Day-of-Week Patterns)
+ * GET /api/admin/command-center/time-analytics
+ */
+export const getTimeAnalytics = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const allAlerts = await Alert.find().lean();
+
+    // 24 Hour Distribution
+    const hourlyCounts = Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      hourLabel: `${hour.toString().padStart(2, "0")}:00`,
+      totalIncidents: 0,
+      criticalIncidents: 0,
+      avgRiskScore: 0,
+      _sumRisk: 0,
+    }));
+
+    // Day of Week Distribution
+    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const dayCounts = dayNames.map((day, index) => ({
+      day,
+      dayIndex: index,
+      totalIncidents: 0,
+      criticalIncidents: 0,
+      avgRiskScore: 0,
+      _sumRisk: 0,
+    }));
+
+    allAlerts.forEach((a: any) => {
+      if (!a.createdAt) return;
+      const created = new Date(a.createdAt);
+      const hour = created.getHours();
+      const day = created.getDay();
+      const score = a.finalRiskScore || a.riskScore || (a.riskLevel === "CRITICAL" ? 90 : 50);
+      const isCrit = a.priority === "P1" || a.riskLevel === "CRITICAL";
+
+      if (hourlyCounts[hour]) {
+        hourlyCounts[hour].totalIncidents++;
+        if (isCrit) hourlyCounts[hour].criticalIncidents++;
+        hourlyCounts[hour]._sumRisk += score;
+      }
+
+      if (dayCounts[day]) {
+        dayCounts[day].totalIncidents++;
+        if (isCrit) dayCounts[day].criticalIncidents++;
+        dayCounts[day]._sumRisk += score;
+      }
+    });
+
+    hourlyCounts.forEach((h) => {
+      h.avgRiskScore = h.totalIncidents > 0 ? Math.round(h._sumRisk / h.totalIncidents) : 0;
+      delete (h as any)._sumRisk;
+    });
+
+    dayCounts.forEach((d) => {
+      d.avgRiskScore = d.totalIncidents > 0 ? Math.round(d._sumRisk / d.totalIncidents) : 0;
+      delete (d as any)._sumRisk;
+    });
+
+    // Find peak period
+    const sortedHours = [...hourlyCounts].sort((a, b) => b.totalIncidents - a.totalIncidents);
+    const peakHour = sortedHours[0]?.totalIncidents > 0 ? `${sortedHours[0].hourLabel} - ${(sortedHours[0].hour + 1).toString().padStart(2, "0")}:00` : "Uniform distribution";
+
+    res.status(200).json({
+      success: true,
+      data: {
+        hourly: hourlyCounts,
+        dayOfWeek: dayCounts,
+        peakHour,
+      },
+    });
+  } catch (error: any) {
+    console.error("Get Time Analytics Error:", error);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+/**
+ * 6. Volunteer Insights & Aggregate Performance
+ * GET /api/admin/command-center/volunteer-analytics
+ */
+export const getVolunteerAnalytics = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const [volunteers, allAlerts] = await Promise.all([
+      User.find({ role: "volunteer" }).select("-password").lean(),
+      Alert.find().lean(),
+    ]);
+
+    let totalAssignments = 0;
+    let acceptedAssignments = 0;
+    let rejectedAssignments = 0;
+    let timedOutAssignments = 0;
+
+    const responderSummaryList: any[] = [];
+
+    volunteers.forEach((v: any) => {
+      const stats = v.volunteerStats || {};
+      const assignments = stats.totalAssignments || 0;
+      const accepted = stats.acceptedCount || 0;
+      const rejected = stats.rejectedCount || 0;
+      const timedOut = stats.timedOutCount || 0;
+
+      totalAssignments += assignments;
+      acceptedAssignments += accepted;
+      rejectedAssignments += rejected;
+      timedOutAssignments += timedOut;
+
+      responderSummaryList.push({
+        id: v._id,
+        name: v.name,
+        email: v.email,
+        phone: v.phone ? `***-***-${v.phone.slice(-4)}` : "N/A",
+        status: v.volunteerStatus || "OFFLINE",
+        isVerified: v.isVerified,
+        totalAssignments: assignments,
+        acceptedCount: accepted,
+        resolvedCount: stats.resolvedCount || 0,
+        acceptanceRate: assignments > 0 ? Math.round((accepted / assignments) * 100) : 100,
+        avgResponseMinutes: stats.avgResponseMinutes || 3.5,
+      });
+    });
+
+    const acceptanceRate = totalAssignments > 0 ? Math.round((acceptedAssignments / totalAssignments) * 100) : 100;
+    const rejectionRate = totalAssignments > 0 ? Math.round((rejectedAssignments / totalAssignments) * 100) : 0;
+    const timeoutRate = totalAssignments > 0 ? Math.round((timedOutAssignments / totalAssignments) * 100) : 0;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        summary: {
+          totalVolunteers: volunteers.length,
+          verifiedVolunteers: volunteers.filter((v: any) => v.isVerified).length,
+          activeNow: volunteers.filter((v: any) => v.volunteerStatus === "BUSY" || v.volunteerStatus === "ONLINE").length,
+          totalAssignments,
+          acceptedAssignments,
+          rejectedAssignments,
+          timedOutAssignments,
+          acceptanceRate,
+          rejectionRate,
+          timeoutRate,
+        },
+        responders: responderSummaryList.sort((a, b) => b.resolvedCount - a.resolvedCount),
+      },
+    });
+  } catch (error: any) {
+    console.error("Get Volunteer Analytics Error:", error);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+/**
+ * 7. AI Insights & Actionable Recommendations
+ * GET /api/admin/command-center/ai-insights
+ */
+export const getAIInsights = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const report = await SafetyReportService.generateFullReport();
+
+    res.status(200).json({
+      success: true,
+      data: {
+        insights: report.insights,
+        recommendations: report.recommendations,
+        generatedAt: report.generatedAt,
+      },
+    });
+  } catch (error: any) {
+    console.error("Get AI Insights Error:", error);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+/**
+ * 8. Real-Time Admin Alert Center
+ * GET /api/admin/command-center/alerts
+ */
+export const getAdminAlertCenter = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const activeAlerts = await Alert.find({ status: { $in: ["active", "accepted"] } })
+      .populate("user", "name phone")
+      .populate("assignedVolunteerId", "name phone")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const alertsFeed: any[] = [];
+
+    activeAlerts.forEach((a: any) => {
+      const isCritical = a.priority === "P1" || a.riskLevel === "CRITICAL";
+      const isUnassigned = !a.assignedVolunteerId && !a.acceptedBy;
+      const isEscalated = a.escalationLevel && a.escalationLevel !== "NONE";
+
+      if (isCritical) {
+        alertsFeed.push({
+          id: `crit_${a._id}`,
+          incidentId: a._id,
+          type: "CRITICAL_INCIDENT",
+          severity: "CRITICAL",
+          title: `CRITICAL Incident ${a.priority || "P1"} Triggered`,
+          message: `User ${a.user?.name || "Anonymous"} signaled emergency distress (${a.source}). Immediate response required.`,
+          timestamp: a.createdAt,
+          location: { latitude: a.latitude, longitude: a.longitude },
+        });
+      }
+
+      if (isUnassigned) {
+        alertsFeed.push({
+          id: `unassign_${a._id}`,
+          incidentId: a._id,
+          type: "NO_RESPONDER",
+          severity: "WARNING",
+          title: "Responder Pending / Unassigned",
+          message: `Incident ${a._id.toString().slice(-6)} is awaiting responder acceptance. Dispatch engine is notifying nearby volunteers.`,
+          timestamp: a.createdAt,
+          location: { latitude: a.latitude, longitude: a.longitude },
+        });
+      }
+
+      if (isEscalated) {
+        alertsFeed.push({
+          id: `esc_${a._id}`,
+          incidentId: a._id,
+          type: "ESCALATION",
+          severity: "CRITICAL",
+          title: "Incident Escalated to Admin Priority",
+          message: `Escalation level: ${a.escalationLevel}. Immediate dispatcher intervention required.`,
+          timestamp: a.updatedAt || a.createdAt,
+          location: { latitude: a.latitude, longitude: a.longitude },
+        });
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        alerts: alertsFeed,
+        unreadCount: alertsFeed.length,
+      },
+    });
+  } catch (error: any) {
+    console.error("Get Admin Alert Center Error:", error);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+/**
+ * 9. Safety Intelligence Full Executive Report
+ * GET /api/admin/command-center/full-report
+ */
+export const getFullSafetyReport = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { startDate, endDate } = req.query;
+    const report = await SafetyReportService.generateFullReport({
+      startDate: startDate ? new Date(startDate as string) : undefined,
+      endDate: endDate ? new Date(endDate as string) : undefined,
+    });
+
+    res.status(200).json({ success: true, data: report });
+  } catch (error: any) {
+    console.error("Get Full Safety Report Error:", error);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+
+/**
+ * 10. Export Aggregate Incidents CSV
+ * GET /api/admin/command-center/export-csv
+ */
+export const exportIncidentsCSV = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { startDate, endDate } = req.query;
+    const csvContent = await SafetyReportService.exportIncidentsCSV({
+      startDate: startDate ? new Date(startDate as string) : undefined,
+      endDate: endDate ? new Date(endDate as string) : undefined,
+    });
+
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", 'attachment; filename="safeher_safety_intelligence_report.csv"');
+    res.status(200).send(csvContent);
+  } catch (error: any) {
+    console.error("Export Incidents CSV Error:", error);
     res.status(500).json({ success: false, message: "Server Error" });
   }
 };

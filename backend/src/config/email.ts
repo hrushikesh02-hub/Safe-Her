@@ -16,14 +16,9 @@ export async function sendEmail({
     "safeher.alerts@gmail.com";
   const senderName = process.env.BREVO_SENDER_NAME || "SafeHer Emergency System";
 
-  if (!brevoApiKey) {
-    console.warn("\n⚠ [Brevo] BREVO_API_KEY is not set in backend/.env.");
-    console.log(`======================================================`);
-    console.log(`📧 [BREVO SIMULATOR] Add BREVO_API_KEY in backend/.env to send real emails.`);
-    console.log(`To: ${to}`);
-    console.log(`Subject: ${subject}`);
-    console.log(`Sender: ${senderName} <${senderEmail}>`);
-    console.log(`======================================================\n`);
+  if (!brevoApiKey || to.endsWith("@safeher.test") || to.endsWith(".test")) {
+    if (!brevoApiKey) console.warn("\n⚠ [Brevo] BREVO_API_KEY is not set in backend/.env.");
+    console.log(`📧 [EMAIL NOTIFICATION] (Simulated / Test Address) To: ${to} | Subject: ${subject}`);
     return { simulated: true, to, subject };
   }
 

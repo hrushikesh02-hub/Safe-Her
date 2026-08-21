@@ -59,7 +59,7 @@ export const getDashboard = async (
       assignedToMeAlerts,
       acceptedAlerts,
       resolvedAlerts,
-      recentAlerts,
+      rawRecentAlerts,
     ] = await Promise.all([
       Alert.countDocuments(),
       Alert.countDocuments({ status: "active" }),
@@ -70,13 +70,16 @@ export const getDashboard = async (
         $or: [
           { assignedVolunteerId: req.user!.id },
           { acceptedBy: req.user!.id },
-          { status: "active" },
+          { status: { $in: ["active", "accepted", "resolved"] } },
         ],
       })
-        .populate("user", "name email phone profileImage")
+        .populate("user", "name email phone profileImage isVerified")
         .sort({ createdAt: -1 })
-        .limit(8),
+        .limit(12),
     ]);
+
+    // Filter out alerts where user was deleted and format response
+    const recentAlerts = rawRecentAlerts.filter((a) => a.user != null);
 
     res.status(200).json({
       success: true,
@@ -133,11 +136,13 @@ export const getAlerts = async (
       filter.status = status;
     }
 
-    const alerts = await Alert.find(filter)
-      .populate("user", "name email phone profileImage")
+    const rawAlerts = await Alert.find(filter)
+      .populate("user", "name email phone profileImage isVerified")
       .populate("assignedVolunteerId", "name email phone profileImage")
       .populate("acceptedBy", "name email phone profileImage")
       .sort({ createdAt: -1 });
+
+    const alerts = rawAlerts.filter((a) => a.user != null);
 
     res.status(200).json({
       success: true,

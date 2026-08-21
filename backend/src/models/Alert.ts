@@ -329,4 +329,14 @@ const alertSchema = new Schema(
   }
 );
 
+// Indexes for high-throughput query and analytics aggregation performance
+alertSchema.index({ createdAt: -1 });
+alertSchema.index({ status: 1, createdAt: -1 });
+alertSchema.index({ riskLevel: 1 });
+alertSchema.index({ priority: 1 });
+alertSchema.index({ source: 1 });
+alertSchema.index({ latitude: 1, longitude: 1 });
+alertSchema.index({ assignedVolunteerId: 1 });
+alertSchema.index({ acceptedBy: 1 });
+
 export default mongoose.model<IAlert>("Alert", alertSchema);

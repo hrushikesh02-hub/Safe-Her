@@ -9,7 +9,14 @@ export interface IUser extends Document {
 
   isBlocked: boolean;
   isVerified: boolean;
+  isEmailVerified: boolean;
   profileImage: string;
+
+  // Real Email OTP Verification
+  emailOtpHash?: string;
+  emailOtpExpiresAt?: Date;
+  emailOtpAttempts?: number;
+  emailOtpLastSentAt?: Date;
 
   // Volunteer location tracking (for nearby volunteer search)
   lastKnownLatitude?: number;
@@ -85,6 +92,26 @@ const userSchema = new Schema<IUser>(
     isVerified: {
       type: Boolean,
       default: false,
+    },
+
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
+
+    // OTP verification fields
+    emailOtpHash: {
+      type: String,
+    },
+    emailOtpExpiresAt: {
+      type: Date,
+    },
+    emailOtpAttempts: {
+      type: Number,
+      default: 0,
+    },
+    emailOtpLastSentAt: {
+      type: Date,
     },
 
     // Volunteer location fields

@@ -85,7 +85,7 @@ Women often face sudden, high-risk situations where manually reaching for a phon
 | :--- | :--- |
 | **Frontend** | React 18, TypeScript, Vite, TanStack Router/Start, Tailwind CSS, Lucide Icons, Leaflet / React-Leaflet, Sonner, Recharts |
 | **Backend API** | Node.js (v18+ / v20+), Express.js, TypeScript, Mongoose / MongoDB, JSON Web Tokens (JWT), Bcrypt.js, Multer |
-| **AI Intelligence Engine** | Python 3.10+, FastAPI, Uvicorn, PyTorch, NumPy, Librosa / Wave native audio processing |
+| **AI Intelligence Engine** | Python 3.10+, FastAPI, Uvicorn, NumPy, SciPy, Librosa / Soundfile audio processing |
 | **Cloud & Communications** | Brevo (Sendinblue) Transactional Email API, Cloudinary Media Storage |
 
 ---
@@ -94,61 +94,48 @@ Women often face sudden, high-risk situations where manually reaching for a phon
 
 ```text
 SafeHer-main/
-│
-├── src/                               # Frontend React Application
-│   ├── components/                    # UI Components (shadcn/ui, layout, cards)
-│   │   ├── layout/                    # PublicHeader, PublicFooter, DashboardLayout
-│   │   └── ui/                        # Reusable Radix / Tailwind primitives
-│   ├── routes/                        # TanStack Router File-Based Pages
-│   │   ├── index.tsx                  # Trust-First Public Landing Page
-│   │   ├── login.tsx                  # User / Volunteer / Admin Login
-│   │   ├── register.tsx               # Account Registration
-│   │   ├── user.ai-fusion.tsx         # Safety Shield Multi-Modal Monitoring
-│   │   ├── user.ai-voice.tsx          # Voice AI Distress Detector
-│   │   ├── user.ai-movement.tsx       # Movement AI & Fall Detection
-│   │   ├── user.predictive-safety.tsx # Predictive Safety & Route Trends
-│   │   ├── user.sos.tsx               # Emergency SOS & Evidence Capture
-│   │   ├── user.contacts.tsx          # Emergency Contacts Management
-│   │   ├── volunteer.dashboard.tsx    # Volunteer Responder Feed
-│   │   ├── volunteer.incidents.$id.tsx# Incident Response & Navigation
-│   │   ├── admin.monitoring.tsx       # Admin Live Incident Command Center
-│   │   └── admin.reports.tsx          # Incident PDF Reports & Audit Logs
-│   ├── services/                      # Client API Service Connectors
-│   ├── lib/                           # Utility functions & audio PCM encoders
-│   └── styles.css                     # Global Tailwind & Design System Tokens
-│
-├── backend/                           # Node.js / Express Backend Server
+├── frontend/                          # React + TanStack Router/Start Web Client
 │   ├── src/
-│   │   ├── config/                    # Database (db.ts) & Cloudinary config
-│   │   ├── controllers/               # Auth, Incident, Volunteer, Admin controllers
-│   │   ├── middleware/                # Auth verification & Role guards (requireAdmin)
-│   │   ├── models/                    # Mongoose Schemas (User, Alert, Incident, Contact)
-│   │   ├── routes/                    # API Route Handlers
-│   │   ├── services/                  # Brevo Email, Incident Priority & Volunteer Ranking
-│   │   └── server.ts                  # Express Server Entry Point
-│   ├── package.json                   # Backend Dependencies
-│   └── tsconfig.json                  # Backend TypeScript Configuration
+│   │   ├── components/                # UI Components (shadcn/ui, layout, map, cards)
+│   │   ├── routes/                    # File-based page routes (User, Volunteer, Admin)
+│   │   ├── services/                  # Client API connectors
+│   │   ├── context/                   # Auth and global state
+│   │   └── styles.css                 # Design system tokens & Tailwind CSS
+│   ├── package.json                   # Frontend dependencies & build scripts
+│   ├── vite.config.ts                 # Vite + React configuration
+│   ├── tsconfig.json                  # Frontend TypeScript configuration
+│   └── .env.example                   # Frontend environment template
 │
-├── ai-service/                        # Python / FastAPI AI Microservice
-│   ├── app/
-│   │   ├── routers/                   # AI API Endpoints (voice, movement, fusion, predictive)
-│   │   ├── services/                  # Distress detector, audio processor, fusion engine
-│   │   └── main.py                    # FastAPI Application Entry
-│   └── requirements.txt               # Python Dependencies
+├── backend/                           # Node.js / Express TypeScript API
+│   ├── src/
+│   │   ├── config/                    # MongoDB (db.ts) & Cloudinary configuration
+│   │   ├── controllers/               # Auth, Alert, Incident, Volunteer, Admin controllers
+│   │   ├── middleware/                # Auth tokens & Role-based guards
+│   │   ├── models/                    # Mongoose schemas (User, Alert, Contact, Event)
+│   │   ├── routes/                    # Express REST endpoints
+│   │   ├── services/                  # Brevo email, volunteer ranking, incident priority
+│   │   └── server.ts                  # Server entry point
+│   ├── package.json                   # Backend dependencies
+│   ├── tsconfig.json                  # Backend TypeScript configuration
+│   └── .env.example                   # Backend environment template
 │
-├── vite.config.ts                     # Standard Vite + React Configuration
-├── package.json                       # Frontend Dependencies & Scripts
-└── README.md                          # Project Documentation
+└── ai-service/                        # Python / FastAPI Machine Learning Microservice
+    ├── app/
+    │   ├── routes/                    # Voice, Movement, Fusion, Predictive endpoints
+    │   ├── services/                  # Distress detector, audio feature extractor
+    │   └── main.py                    # FastAPI application entry
+    ├── requirements.txt               # Python dependencies (fastapi, uvicorn, librosa, numpy)
+    └── README.md                      # AI service documentation
 ```
 
 ---
 
-## ⚙️ Installation & Setup
+## ⚙️ Local Installation & Development
 
 ### Prerequisites
 - **Node.js**: v18.17.0 or v20.x+
 - **npm**: v9.x+
-- **Python**: v3.10 or v3.11+
+- **Python**: v3.10+
 - **MongoDB**: Local MongoDB instance (`mongodb://127.0.0.1:27017/safeher`) or MongoDB Atlas URI
 
 ---
@@ -163,7 +150,6 @@ python -m venv venv
 
 # Windows:
 .\venv\Scripts\activate
-
 # macOS / Linux:
 # source venv/bin/activate
 
@@ -173,7 +159,7 @@ pip install -r requirements.txt
 # Start FastAPI server on port 8000
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
-*Health Check*: Open `http://127.0.0.1:8000/health` in your browser (should return `{"status":"healthy"}`).
+*Health Check*: Open `http://127.0.0.1:8000/` or `http://127.0.0.1:8000/docs` in your browser.
 
 ---
 
@@ -185,7 +171,7 @@ cd backend
 # Install dependencies
 npm install
 
-# Compile TypeScript and start Express API server on port 5000
+# Start Express server with auto-reload on port 5000
 npm run dev
 ```
 *Health Check*: Open `http://127.0.0.1:5000/` in your browser.
@@ -195,7 +181,9 @@ npm run dev
 ### 3. Frontend Web Client Setup (Terminal 3)
 
 ```bash
-# In the root SafeHer-main directory:
+cd frontend
+
+# Install dependencies
 npm install
 
 # Start Vite dev server on port 8080
@@ -205,71 +193,69 @@ npm run dev
 
 ---
 
-## 🔐 Environment Variables
+## 🌐 Production Deployment Guide
 
-Create `.env` files in their respective folders using the templates below.
+Deploy the three microservices in the following order:
 
-### Backend (`backend/.env`)
-```env
-PORT=5000
-NODE_ENV=development
-MONGO_URI=mongodb://127.0.0.1:27017/safeher
-JWT_SECRET=your_jwt_secret_key_here
-AI_SERVICE_URL=http://127.0.0.1:8000
-
-# Brevo (Sendinblue) Transactional Email
-BREVO_API_KEY=your_brevo_api_key_here
-EMAIL_FROM=alerts@safeher.org
-EMAIL_FROM_NAME=SafeHer Emergency System
-
-# Cloudinary (Evidence Video & Audio Uploads)
-CLOUDINARY_CLOUD_NAME=your_cloud_name
-CLOUDINARY_API_KEY=your_cloudinary_api_key
-CLOUDINARY_API_SECRET=your_cloudinary_api_secret
+```text
+[ Step 1: Deploy AI Service on Render ]
+                 │ (e.g. https://safeher-ai.onrender.com)
+                 ▼
+[ Step 2: Deploy Backend on Render ]
+                 │ (e.g. https://safeher-backend.onrender.com)
+                 ▼
+[ Step 3: Deploy Frontend on Vercel ]
 ```
 
-### AI Service (`ai-service/.env`)
-```env
-PORT=8000
-HOST=127.0.0.1
-DEBUG=True
-MODEL_DIR=app/models
-```
+### 1. Deploy `ai-service` on Render
+1. Create a new **Web Service** on [Render](https://dashboard.render.com/).
+2. Select your GitHub repository.
+3. Settings:
+   - **Root Directory**: `ai-service`
+   - **Environment**: `Python 3`
+   - **Build Command**: `pip install --upgrade pip && pip install -r requirements.txt`
+   - **Start Command**: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+4. Copy the assigned URL (e.g., `https://safeher-ai-service.onrender.com`).
+
+### 2. Deploy `backend` on Render
+1. Create a new **Web Service** on [Render](https://dashboard.render.com/).
+2. Select your GitHub repository.
+3. Settings:
+   - **Root Directory**: `backend`
+   - **Environment**: `Node`
+   - **Build Command**: `npm install && npm run build`
+   - **Start Command**: `npm start`
+4. Add Environment Variables:
+   - `PORT` = `5000`
+   - `MONGO_URI` = `mongodb+srv://<user>:<password>@cluster.mongodb.net/safeher?retryWrites=true&w=majority`
+   - `JWT_SECRET` = `<your-jwt-secret>`
+   - `AI_SERVICE_URL` = `https://safeher-ai-service.onrender.com`
+   - `GOOGLE_MAPS_API_KEY` = `<your-google-maps-api-key>`
+   - `CLOUDINARY_CLOUD_NAME` = `<your-cloudinary-name>`
+   - `CLOUDINARY_API_KEY` = `<your-cloudinary-api-key>`
+   - `CLOUDINARY_API_SECRET` = `<your-cloudinary-secret>`
+   - `BREVO_API_KEY` = `<your-brevo-api-key>`
+   - `BREVO_SENDER_EMAIL` = `<your-verified-sender-email>`
+   - `BREVO_SENDER_NAME` = `SafeHer Emergency System`
+5. Copy the assigned backend URL (e.g., `https://safeher-backend.onrender.com`).
+
+### 3. Deploy `frontend` on Vercel
+1. Import your GitHub repository in [Vercel](https://vercel.com/dashboard).
+2. Settings:
+   - **Root Directory**: `frontend`
+   - **Framework Preset**: `Vite`
+   - **Build Command**: `npm run build`
+   - **Output Directory**: `.output/public` or `dist`
+3. Add Environment Variables:
+   - `VITE_API_URL` = `https://safeher-backend.onrender.com/api`
+   - `VITE_AI_SERVICE_URL` = `https://safeher-ai-service.onrender.com`
+4. Deploy!
 
 ---
 
-## 📡 API Reference
+## 🔐 Environment Variables Summary
 
-### Backend Endpoints (`http://127.0.0.1:5000`)
-
-| Method | Endpoint | Description | Auth Required |
-| :--- | :--- | :--- | :---: |
-| `POST` | `/api/auth/register` | Register a new User or Volunteer account | No |
-| `POST` | `/api/auth/login` | Authenticate user and receive JWT bearer token | No |
-| `GET` | `/api/auth/me` | Fetch profile of current authenticated user | User / Vol / Admin |
-| `POST` | `/api/alerts/sos` | Trigger manual emergency SOS incident | User |
-| `POST` | `/api/ai/voice/analyze` | Process audio file or transcript for distress | User |
-| `POST` | `/api/ai/voice/trigger-sos` | Automatically create SOS incident from voice AI | User |
-| `POST` | `/api/ai/fusion/analyze` | Calculate Multi-Modal Risk Fusion score | User |
-| `POST` | `/api/ai/fusion/trigger-sos`| Create emergency incident from Safety Shield | User |
-| `GET` | `/api/contacts` | Retrieve user's configured emergency contacts | User |
-| `POST` | `/api/contacts` | Add a new emergency contact | User |
-| `GET` | `/api/volunteer/incidents` | Fetch active emergency alerts for volunteers | Volunteer |
-| `POST` | `/api/volunteer/incidents/:id/accept` | Accept and respond to an emergency alert | Volunteer |
-| `GET` | `/api/admin/incidents` | Fetch all system alerts and live locations | Admin |
-| `PUT` | `/api/admin/incidents/:id/resolve` | Mark an active incident as resolved | Admin |
-| `POST` | `/api/admin/incidents/:id/evidence` | Upload recorded audio/video evidence | User / Admin |
-| `GET` | `/api/admin/reports` | Generate incident audit logs & summary stats | Admin |
-
-### AI Microservice Endpoints (`http://127.0.0.1:8000`)
-
-| Method | Endpoint | Input | Output |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/health` | None | `{"status": "healthy"}` |
-| `POST` | `/api/voice/analyze` | Audio WAV file or transcript string | Distress classification, keyword matches, voice risk score (0–100) |
-| `POST` | `/api/movement/analyze` | Accelerometer `{x, y, z}` arrays | Anomaly classification, movement risk score (0–100) |
-| `POST` | `/api/fusion/analyze` | `{voice_risk_score, movement_risk_score, gps_context_score}` | Synthesized final risk score, risk level, recommendation |
-| `POST` | `/api/predictive/evaluate`| `{lat, lng, hour, route_type}` | Risk trend forecast, early warning alert level |
+Refer to [`backend/.env.example`](backend/.env.example) and [`frontend/.env.example`](frontend/.env.example) for exact configuration keys.
 
 ---
 
@@ -281,29 +267,6 @@ MODEL_DIR=app/models
    - Access to Volunteer Responder Feed, Incident Acceptance, Navigation Coordinates, and Responder Profile.
 3. **Admin (`ADMIN`)**:
    - Access to Admin Incident Command Center, Volunteer Verification Management, Live Evidence Playback, Incident Resolution, and Exportable Reports.
-
----
-
-## 🧪 Testing & Verification
-
-```bash
-# Run Frontend Typecheck & Production Build
-npm run build
-
-# Run Backend TypeScript Compilation
-cd backend && npm run build
-
-# Clean Active Alerts Database (for Fresh Testing)
-cd backend && npx ts-node src/tests/cleanAlerts.ts
-```
-
-### Pre-Configured Test Accounts
-
-| Role | Email | Password |
-| :--- | :--- | :--- |
-| **User** | `hrushi2402@gmail.com` | `12345678` |
-| **Volunteer** | `hrushikeshthombare95@gmail.com` | `12345678` |
-| **Admin** | `grajp2405@gmail.com` | `12345678` |
 
 ---
 

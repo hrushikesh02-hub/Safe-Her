@@ -153,7 +153,7 @@ router.get(
 router.get(
   "/:id/evidence/stream/:filename",
   verifyToken,
-  authorizeRoles("admin", "volunteer"),
+  authorizeRoles("admin"),
   streamEvidenceFile
 );
 

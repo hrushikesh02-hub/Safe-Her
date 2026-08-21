@@ -20,6 +20,16 @@ import {
   getRecentAlerts,
   getRecentActivities,
   getResponseAnalytics,
+  getCommandCenterOverview,
+  getRiskAnalytics,
+  getSignalAnalytics,
+  getSafetyHotspots,
+  getTimeAnalytics,
+  getVolunteerAnalytics,
+  getAIInsights,
+  getAdminAlertCenter,
+  getFullSafetyReport,
+  exportIncidentsCSV,
 } from "../controllers/adminController";
 import {
   verifyToken,
@@ -31,7 +41,19 @@ const router = express.Router();
 router.use(verifyToken);
 router.use(authorizeRoles("admin"));
 
-// Command Center & Analytics
+// Phase 5: AI Safety Intelligence Command Center Endpoints
+router.get("/command-center/overview", getCommandCenterOverview);
+router.get("/command-center/risk-analytics", getRiskAnalytics);
+router.get("/command-center/signal-analytics", getSignalAnalytics);
+router.get("/command-center/hotspots", getSafetyHotspots);
+router.get("/command-center/time-analytics", getTimeAnalytics);
+router.get("/command-center/volunteer-analytics", getVolunteerAnalytics);
+router.get("/command-center/ai-insights", getAIInsights);
+router.get("/command-center/alerts", getAdminAlertCenter);
+router.get("/command-center/full-report", getFullSafetyReport);
+router.get("/command-center/export-csv", exportIncidentsCSV);
+
+// Existing Legacy & Phase 4 Endpoints
 router.get("/dashboard", getDashboardStats);
 router.get("/response-analytics", getResponseAnalytics);
 
